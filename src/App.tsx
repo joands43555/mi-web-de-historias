@@ -285,6 +285,60 @@ function pcmToWav(pcmBase64: string, sampleRate: number = 24000): { url: string;
   return { url: URL.createObjectURL(blob), blob };
 }
 
+// --- Groq (motor de texto: historias, guiones y prompts) ---
+
+interface GroqChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+async function callGroq(messages: GroqChatMessage[], model: string = "llama-3.3-70b-versatile"): Promise<string> {
+  const response = await fetch("/api/groq", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.9,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  if (!response.ok) {
+    let details = "";
+    try {
+      const errJson = await response.json();
+      details = errJson.error?.message || errJson.error || JSON.stringify(errJson);
+    } catch {
+      details = await response.text();
+    }
+    throw new Error(`Groq API error (${response.status}): ${details}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Groq no devolvió contenido en la respuesta.");
+  return content;
+}
+
+// Groq (a diferencia de Gemini) no fuerza un schema estricto, solo JSON válido.
+// Esta función limpia envolturas de markdown y extrae el primer objeto JSON completo.
+function parseGroqJson(rawText: string): any {
+  let cleaned = rawText.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      return JSON.parse(cleaned.slice(start, end + 1));
+    }
+    throw new Error("No se pudo interpretar la respuesta JSON de Groq.");
+  }
+}
+
 // --- Types ---
 
 interface StorySegment {
@@ -1865,6 +1919,11 @@ const COSTS = {
   };
 
   const validateApiKey = (feature: 'story' | 'visual' | 'audio' | 'video' = 'story'): string | null => {
+    // Story generation now runs on Groq, configured server-side. No client key needed.
+    if (feature === 'story') {
+      return null;
+    }
+
     // For visual features, if using Pollinations, we don't need a Gemini key
     if (feature === 'visual' && imageProvider === "Pollinations") {
       return null;
@@ -1882,9 +1941,7 @@ const COSTS = {
 
     const key = getApiKey();
     if (!key) {
-      if (feature === 'story') {
-        return "Configura tu API Key de Gemini en los ajustes para generar historias.";
-      } else if (feature === 'visual') {
+      if (feature === 'visual') {
         return "Para generar imágenes gratis, selecciona 'Proveedor: Pollinations' en los ajustes. Si prefieres usar Google AI, configura tu API Key.";
       } else if (feature === 'audio') {
         return "La generación de audio (Narración) requiere una API Key de Gemini o ElevenLabs. Configúrala en los ajustes.";
@@ -2050,30 +2107,12 @@ const COSTS = {
            - FINAL VIRAL Y PREGUNTA: El desenlace (último segmento) debe ser devastador o revelador, y terminar INVARIABLEMENTE con una pregunta profunda y emocional dirigida al espectador (ej. "¿Qué harías tú si todo fuera una mentira?").`
         : "";
 
-      // Gemini Fallback / Default
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("Por favor, configura tu API Key de Gemini para generar historias.");
-      const ai = new GoogleGenAI({ apiKey });
+      // Groq (Llama 3.3 70B) - motor de texto para historias y prompts
+      const visualAnchorNote = visualAnchorImages.length > 0
+        ? `NOTA: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia de personaje, pero este motor de texto no puede verlas. Inventa una descripción física ÚNICA, DETALLADA y CONSISTENTE del personaje (color de pelo, rasgos, estilo) y mantenla IDÉNTICA en todos los segmentos.`
+        : "";
 
       const generateWithModel = async (modelName: string) => {
-        let contentsParts: any[] = [];
-        
-        // Feed visual avatars to the language model for absolute consistency
-        if (visualAnchorImages.length > 0) {
-          contentsParts.push({ text: "REFERENCIAS VISUALES OBLIGATORIAS: Estudia detenidamente las siguientes imágenes aportadas por el usuario. Tienes que clonar exactamente a estos personajes." });
-          const imageParts = visualAnchorImages.map(img => {
-            const split = img.split(',');
-            const mimeType = split[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-            return {
-              inlineData: {
-                data: split[1],
-                mimeType
-              }
-            };
-          });
-          contentsParts.push(...imageParts);
-        }
-        
         const directScriptInstruction = activePrompt.includes("NARRACIÓN") || activePrompt.includes("HOOK") 
           ? `¡ESTADO CRÍTICO! El usuario ha proporcionado un GUIÓN TEXTUAL COMPLETO. TU ÚNICA TAREA ES EXTRAER ESE TEXTO Y DIVIDIRLO EN SEGMENTOS. **ESTÁ TOTALMENTE PROHIBIDO ALTERAR, CAMBIAR, AÑADIR O QUITAR PALABRAS Y DESENLACES A LA HISTORIA.** Respeta el texto EXACTO. Asigna una voz diferente si un segmento es diálogo de otro personaje.` : ``;
 
@@ -2118,66 +2157,46 @@ const COSTS = {
           ${dynamicAnglesInstruction}
           ${!isReflectionMode ? `
           IMPORTANTE: Personajes de BELLEZA SUPREMA, atractivos y consistentes. Define un color de pelo y mantenlo.` : "Variedad visual total entre segmentos."}
+          ${visualAnchorNote}
           Asegúrate de que cada segmento sea visualmente espectacular, artístico y de calidad suprema.
-          Devuelve el resultado como un objeto JSON con 'title', 'narration', 'hashtags' (array), y 'segments' (array de objetos {text, imagePrompt, videoDescription, cameraAngle}).`;
 
-        contentsParts.push({ text: textPrompt });
+          FORMATO DE SALIDA (OBLIGATORIO): Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional antes ni después, sin markdown, con EXACTAMENTE esta forma:
+          {
+            "title": string,
+            "narration": string,
+            "hashtags": string[],
+            "segments": [
+              {
+                "text": string,
+                "imagePrompt": string, // EN INGLÉS, MÍNIMO 150 PALABRAS, extremadamente detallado (iluminación, atmósfera, cámara). Mantén al personaje consistente.
+                "videoDescription": string, // EN ESPAÑOL, describe movimiento y vestimenta, termina siempre con "No poner música ni audio de voz."
+                "cameraAngle": string,
+                "characterVoice": string // opcional
+              }
+            ]
+          }`;
 
-        return await withRetry(() => ai.models.generateContent({
-          model: modelName,
-          contents: contentsParts,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                narration: { type: Type.STRING },
-                hashtags: { type: Type.ARRAY, items: { type: Type.STRING } },
-                segments: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      text: { type: Type.STRING },
-                      imagePrompt: { 
-                        type: Type.STRING, 
-                        description: "An EXTREMELY DETAILED technical and artistic visual description in ENGLISH (MINIMUM 150 WORDS). Focus on: dramatic lighting, cinematic atmosphere, and high resolution. STRICTLY MAINTAIN THE CHARACTER'S APPEARANCE FROM THE REFERENCE IMAGE. DO NOT modify clothing, body type, hair style, or colors unless explicitly changed in the story narrative." 
-                      },
-                      videoDescription: {
-                        type: Type.STRING,
-                        description: "Descripción detallada en ESPAÑOL del movimiento, vestimenta (OBLIGATORIO EN CADA SEGMENTO) y escena para la creación de video."
-                      },
-                      cameraAngle: { type: Type.STRING },
-                      characterVoice: { type: Type.STRING, description: "El nombre de la voz que quieres asignar a este segmento (opcional)." }
-                    },
-                    required: ["text", "imagePrompt", "videoDescription", "cameraAngle"]
-                  }
-                }
-              },
-              required: ["title", "narration", "hashtags", "segments"]
-            }
-          }
-        }));
+        const groqResponse = await withRetry(() => callGroq([
+          { role: "system", content: "Eres un guionista y director de arte experto en contenido viral para redes sociales. SIEMPRE respondes con JSON válido y nada más, sin explicaciones ni markdown." },
+          { role: "user", content: textPrompt }
+        ], modelName));
+
+        return groqResponse;
       };
 
-      let response;
+      let rawText: string;
       try {
-        response = await generateWithModel("gemini-3-flash-preview");
+        rawText = await generateWithModel("llama-3.3-70b-versatile");
       } catch (err: any) {
-        if (err.message?.includes("429") || err.message?.includes("quota")) {
-          console.warn("Quota exceeded for Gemini 3 Flash, trying Gemini 3.1 Flash Lite...");
-          response = await generateWithModel("gemini-3.1-flash-lite-preview");
-        } else {
-          throw err;
-        }
+        console.warn("Fallo con llama-3.3-70b-versatile, probando llama-3.1-8b-instant...", err);
+        rawText = await generateWithModel("llama-3.1-8b-instant");
       }
 
-      if (!response.text) {
-        throw new Error("El modelo no devolvió ninguna respuesta.");
+      if (!rawText) {
+        throw new Error("Groq no devolvió ninguna respuesta.");
       }
 
-      const data = JSON.parse(response.text);
+      const data = parseGroqJson(rawText);
       
       addCost(COSTS.STORY_GEN, 'stories');
       const formattedSegments = data.segments.map((s: any, i: number) => ({
