@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guía de Integración — Character Forge</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;
+  --bg2:#161b22;
+  --bg3:#21262d;
+  --border:#30363d;
+  --blue:#58a6ff;
+  --green:#3fb950;
+  --orange:#f0883e;
+  --purple:#bc8cff;
+  --red:#f85149;
+  --yellow:#e3b341;
+  --text:#c9d1d9;
+  --text2:#8b949e;
+  --white:#f0f6fc;
+}
+body{background:var(--bg);color:var(--text);font-family:'Sora',sans-serif;font-size:15px;line-height:1.7;min-height:100vh}
+
+/* HEADER */
+header{background:linear-gradient(135deg,#0d1117 0%,#161b22 100%);border-bottom:1px solid var(--border);padding:3rem 2rem 2rem;text-align:center}
+.badge{display:inline-block;background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);border-radius:20px;padding:.25rem 1rem;font-size:.75rem;color:var(--blue);letter-spacing:.08em;text-transform:uppercase;font-weight:600;margin-bottom:1rem}
+h1{font-size:clamp(1.6rem,4vw,2.5rem);font-weight:700;color:var(--white);line-height:1.2;margin-bottom:.75rem}
+h1 span{color:var(--blue)}
+.subtitle{color:var(--text2);font-size:1rem;max-width:600px;margin:0 auto}
+
+/* MAIN */
+main{max-width:960px;margin:0 auto;padding:3rem 1.5rem 5rem}
+
+/* STEP */
+.step{margin-bottom:3rem;position:relative}
+.step-header{display:flex;align-items:center;gap:1rem;margin-bottom:1.25rem}
+.step-num{width:36px;height:36px;border-radius:50%;background:var(--blue);color:#0d1117;font-weight:700;font-size:.9rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-title{font-size:1.2rem;font-weight:700;color:var(--white)}
+.step-desc{color:var(--text2);margin-bottom:1rem;font-size:.93rem;padding-left:52px}
+
+/* CARDS */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;margin-bottom:1rem}
+.card-title{font-weight:600;color:var(--white);margin-bottom:.5rem;font-size:.95rem}
+.card p{color:var(--text2);font-size:.88rem;line-height:1.6}
+
+/* CODE BLOCK */
+.code-wrap{position:relative;margin:1rem 0}
+.code-label{font-size:.7rem;color:var(--text2);text-transform:uppercase;letter-spacing:.1em;font-family:'JetBrains Mono',monospace;margin-bottom:.35rem}
+pre{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:1.25rem 1.5rem;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:.82rem;line-height:1.7;color:var(--text)}
+.copy-btn{position:absolute;top:.6rem;right:.6rem;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:.3rem .7rem;font-size:.72rem;color:var(--text2);cursor:pointer;font-family:'Sora',sans-serif;transition:all .2s}
+.copy-btn:hover{border-color:var(--blue);color:var(--blue)}
+
+/* SYNTAX */
+.k{color:var(--purple)}   /* keyword */
+.s{color:var(--green)}    /* string */
+.c{color:var(--text2);font-style:italic}  /* comment */
+.v{color:var(--orange)}   /* value/var */
+.f{color:var(--blue)}     /* function */
+.t{color:var(--yellow)}   /* tag */
+.a{color:var(--blue)}     /* attr */
+
+/* ALERT */
+.alert{border-radius:10px;padding:1rem 1.25rem;margin:1rem 0;font-size:.88rem;display:flex;gap:.75rem;align-items:flex-start}
+.alert.warn{background:rgba(240,136,62,0.08);border:1px solid rgba(240,136,62,0.3);color:var(--orange)}
+.alert.info{background:rgba(88,166,255,0.07);border:1px solid rgba(88,166,255,0.25);color:var(--blue)}
+.alert.success{background:rgba(63,185,80,0.07);border:1px solid rgba(63,185,80,0.25);color:var(--green)}
+.alert-icon{font-size:1.1rem;flex-shrink:0;margin-top:.05rem}
+.alert strong{display:block;margin-bottom:.15rem}
+
+/* TABLE */
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th{background:var(--bg3);color:var(--white);font-weight:600;padding:.7rem 1rem;text-align:left;border-bottom:1px solid var(--border)}
+td{padding:.65rem 1rem;border-bottom:1px solid rgba(48,54,61,0.5);color:var(--text2);vertical-align:top}
+td:first-child{color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.8rem}
+td .pill{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.72rem;font-weight:600}
+td .req{background:rgba(248,81,73,0.15);color:var(--red)}
+td .opt{background:rgba(63,185,80,0.12);color:var(--green)}
+
+/* CHECKLIST */
+.checklist{list-style:none;padding:0}
+.checklist li{display:flex;gap:.75rem;align-items:flex-start;padding:.6rem 0;border-bottom:1px solid rgba(48,54,61,0.4);font-size:.9rem;color:var(--text2)}
+.checklist li:last-child{border:none}
+.checklist li::before{content:'☐';color:var(--blue);font-size:1rem;flex-shrink:0;margin-top:.05rem}
+
+/* DIVIDER */
+.divider{border:none;border-top:1px solid var(--border);margin:2.5rem 0}
+
+/* SECTION LABEL */
+.section-label{font-size:.7rem;color:var(--text2);text-transform:uppercase;letter-spacing:.12em;font-weight:600;margin-bottom:1.5rem;display:flex;align-items:center;gap:.5rem}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* FLOW */
+.flow{display:flex;gap:0;flex-wrap:wrap;margin:1rem 0}
+.flow-step{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:.75rem 1.1rem;font-size:.82rem;color:var(--text);flex:1;min-width:130px;text-align:center;position:relative}
+.flow-step+.flow-step::before{content:'→';position:absolute;left:-14px;top:50%;transform:translateY(-50%);color:var(--text2);font-size:1rem}
+.flow-step strong{display:block;color:var(--blue);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem}
+
+/* FOOTER */
+footer{border-top:1px solid var(--border);padding:2rem;text-align:center;color:var(--text2);font-size:.82rem}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="badge">Guía de Integración</div>
+  <h1>Character Forge<br><span>Cómo integrarlo en tu web</span></h1>
+  <p class="subtitle">Todo lo que tu equipo técnico necesita para implementar el sistema de análisis de avatares 3D con generación de historias por IA.</p>
+</header>
+
+<main>
+
+  <!-- FLUJO -->
+  <div style="margin-bottom:2.5rem">
+    <div class="section-label">Cómo funciona el sistema</div>
+    <div class="flow">
+      <div class="flow-step"><strong>1. Upload</strong>Usuario sube GLB/GLTF o imagen</div>
+      <div class="flow-step"><strong>2. Render</strong>Three.js renderiza el modelo 3D</div>
+      <div class="flow-step"><strong>3. Captura</strong>Screenshot automático del avatar</div>
+      <div class="flow-step"><strong>4. IA Vision</strong>Claude analiza los rasgos</div>
+      <div class="flow-step"><strong>5. Historia</strong>Claude genera narrativa consistente</div>
+    </div>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">1</div>
+      <div class="step-title">Obtener la API Key de Anthropic</div>
+    </div>
+    <p class="step-desc">El sistema usa la IA de Anthropic (Claude) para analizar los avatares y generar historias. Necesitas una API key activa.</p>
+
+    <div class="card">
+      <div class="card-title">🔗 Cómo obtenerla</div>
+      <p>1. Ve a <strong style="color:var(--blue)">console.anthropic.com</strong><br>
+      2. Crea una cuenta o inicia sesión<br>
+      3. Ve a <strong>API Keys</strong> → <strong>Create Key</strong><br>
+      4. Copia la clave (empieza con <code style="color:var(--orange)">sk-ant-...</code>)<br>
+      5. Guárdala en un lugar seguro — no se puede ver de nuevo</p>
+    </div>
+
+    <div class="alert warn">
+      <span class="alert-icon">⚠️</span>
+      <div><strong>NUNCA expongas la API key en código frontend público.</strong>
+      Debe ir en el backend (servidor) de tu web, no directamente en el HTML que me ve el usuario.</div>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- STEP 2 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">2</div>
+      <div class="step-title">Crear el endpoint en tu servidor (Backend)</div>
+    </div>
+    <p class="step-desc">Tu web necesita un endpoint propio que reciba las peticiones del frontend y las reenvíe a la API de Anthropic con la key guardada de forma segura.</p>
+
+    <div class="code-wrap">
+      <div class="code-label">Opción A — Node.js / Express</div>
+      <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+      <pre><span class="c">// archivo: server.js  (instalar: npm install express cors)</span>
+<span class="k">const</span> express = <span class="f">require</span>(<span class="s">'express'</span>);
+<span class="k">const</span> cors = <span class="f">require</span>(<span class="s">'cors'</span>);
+<span class="k">const</span> app = <span class="f">express</span>();
+
+app.<span class="f">use</span>(<span class="f">cors</span>());
+app.<span class="f">use</span>(express.<span class="f">json</span>({ limit: <span class="s">'20mb'</span> }));
+
+<span class="c">// Guarda la API key en variable de entorno (.env)</span>
+<span class="k">const</span> API_KEY = process.env.<span class="v">ANTHROPIC_API_KEY</span>;
+
+app.<span class="f">post</span>(<span class="s">'/api/claude'</span>, <span class="k">async</span> (req, res) => {
+  <span class="k">const</span> response = <span class="k">await</span> <span class="f">fetch</span>(<span class="s">'https://api.anthropic.com/v1/messages'</span>, {
+    method: <span class="s">'POST'</span>,
+    headers: {
+      <span class="s">'Content-Type'</span>: <span class="s">'application/json'</span>,
+      <span class="s">'x-api-key'</span>: API_KEY,
+      <span class="s">'anthropic-version'</span>: <span class="s">'2023-06-01'</span>
+    },
+    body: <span class="v">JSON</span>.<span class="f">stringify</span>(req.body)
+  });
+  <span class="k">const</span> data = <span class="k">await</span> response.<span class="f">json</span>();
+  res.<span class="f">json</span>(data);
+});
+
+app.<span class="f">listen</span>(<span class="v">3000</span>);</pre>
+    </div>
+
+    <div class="code-wrap">
+      <div class="code-label">Opción B — PHP (si tu hosting usa PHP)</div>
+      <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+      <pre><span class="c">&lt;?php  // archivo: claude-proxy.php</span>
+<span class="v">$apiKey</span> = <span class="s">'sk-ant-TU_KEY_AQUI'</span>; <span class="c">// o usar getenv()</span>
+<span class="v">$body</span>   = file_get_contents(<span class="s">'php://input'</span>);
+
+<span class="v">$ch</span> = curl_init(<span class="s">'https://api.anthropic.com/v1/messages'</span>);
+curl_setopt_array(<span class="v">$ch</span>, [
+  CURLOPT_POST           => <span class="k">true</span>,
+  CURLOPT_POSTFIELDS     => <span class="v">$body</span>,
+  CURLOPT_RETURNTRANSFER => <span class="k">true</span>,
+  CURLOPT_HTTPHEADER     => [
+    <span class="s">'Content-Type: application/json'</span>,
+    <span class="s">'x-api-key: '</span> . <span class="v">$apiKey</span>,
+    <span class="s">'anthropic-version: 2023-06-01'</span>
+  ]
+]);
+
+header(<span class="s">'Content-Type: application/json'</span>);
+<span class="k">echo</span> curl_exec(<span class="v">$ch</span>);
+curl_close(<span class="v">$ch</span>);
+<span class="c">?&gt;</span></pre>
+    </div>
+
+    <div class="code-wrap">
+      <div class="code-label">Opción C — Python / FastAPI</div>
+      <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+      <pre><span class="c"># pip install fastapi uvicorn httpx python-dotenv</span>
+<span class="k">from</span> fastapi <span class="k">import</span> FastAPI
+<span class="k">from</span> fastapi.middleware.cors <span class="k">import</span> CORSMiddleware
+<span class="k">import</span> httpx, os
+
+app = <span class="f">FastAPI</span>()
+app.add_middleware(CORSMiddleware, allow_origins=[<span class="s">"*"</span>], allow_methods=[<span class="s">"*"</span>], allow_headers=[<span class="s">"*"</span>])
+
+<span class="v">API_KEY</span> = os.<span class="f">getenv</span>(<span class="s">"ANTHROPIC_API_KEY"</span>)
+
+<span class="k">@</span>app.<span class="f">post</span>(<span class="s">"/api/claude"</span>)
+<span class="k">async def</span> <span class="f">proxy</span>(body: dict):
+  <span class="k">async with</span> httpx.<span class="f">AsyncClient</span>() <span class="k">as</span> client:
+    r = <span class="k">await</span> client.<span class="f">post</span>(
+      <span class="s">"https://api.anthropic.com/v1/messages"</span>,
+      headers={<span class="s">"x-api-key"</span>: <span class="v">API_KEY</span>, <span class="s">"anthropic-version"</span>: <span class="s">"2023-06-01"</span>},
+      json=body, timeout=<span class="v">60</span>
+    )
+    <span class="k">return</span> r.<span class="f">json</span>()</pre>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- STEP 3 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">3</div>
+      <div class="step-title">Modificar la URL en el HTML del Character Forge</div>
+    </div>
+    <p class="step-desc">En el archivo <code style="color:var(--orange)">character-forge.html</code> hay dos llamadas <code style="color:var(--orange)">fetch()</code>. Cambia la URL directa de Anthropic por tu endpoint propio.</p>
+
+    <div class="code-wrap">
+      <div class="code-label">Busca esto en el HTML (2 veces)</div>
+      <pre><span class="c">// ❌ URL DIRECTA — no usar en producción</span>
+<span class="f">fetch</span>(<span class="s">'https://api.anthropic.com/v1/messages'</span>, { ... })</pre>
+    </div>
+
+    <div class="code-wrap">
+      <div class="code-label">Reemplázalo por tu endpoint</div>
+      <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+      <pre><span class="c">// ✅ URL DE TU SERVIDOR</span>
+<span class="f">fetch</span>(<span class="s">'/api/claude'</span>, {
+  method: <span class="s">'POST'</span>,
+  headers: { <span class="s">'Content-Type'</span>: <span class="s">'application/json'</span> },
+  body: <span class="v">JSON</span>.<span class="f">stringify</span>({ <span class="c">/* mismos parámetros */</span> })
+})</pre>
+    </div>
+
+    <div class="alert info">
+      <span class="alert-icon">ℹ️</span>
+      <div><strong>Nota:</strong> El cuerpo del request (model, max_tokens, messages) no cambia. Solo cambia la URL y desaparecen los headers de autenticación del frontend.</div>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- STEP 4 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">4</div>
+      <div class="step-title">Agregar las librerías externas (CDN)</div>
+    </div>
+    <p class="step-desc">El HTML carga estas dependencias automáticamente desde CDN. Si tu web usa Content Security Policy (CSP), debes permitirlas:</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Librería</th>
+          <th>Para qué sirve</th>
+          <th>CDN</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Three.js r128</td>
+          <td>Renderizar modelos 3D (GLB/GLTF)</td>
+          <td>cdnjs.cloudflare.com</td>
+          <td><span class="pill req">Requerida</span></td>
+        </tr>
+        <tr>
+          <td>GLTFLoader</td>
+          <td>Cargar archivos GLB/GLTF</td>
+          <td>cdn.jsdelivr.net</td>
+          <td><span class="pill req">Requerida</span></td>
+        </tr>
+        <tr>
+          <td>OrbitControls</td>
+          <td>Rotar el modelo con el mouse</td>
+          <td>cdn.jsdelivr.net</td>
+          <td><span class="pill opt">Opcional</span></td>
+        </tr>
+        <tr>
+          <td>Google Fonts</td>
+          <td>Tipografía (Cinzel, EB Garamond)</td>
+          <td>fonts.googleapis.com</td>
+          <td><span class="pill opt">Opcional</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="code-wrap" style="margin-top:1rem">
+      <div class="code-label">Estos scripts ya están incluidos en el &lt;head&gt; del HTML</div>
+      <pre><span class="t">&lt;script</span> <span class="a">src</span>=<span class="s">"https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"</span><span class="t">&gt;&lt;/script&gt;</span>
+<span class="c">&lt;!-- GLTFLoader y OrbitControls se cargan dinámicamente al subir un modelo 3D --&gt;</span></pre>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- STEP 5 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">5</div>
+      <div class="step-title">Configuración del servidor (CORS y límites)</div>
+    </div>
+    <p class="step-desc">Los avatares 3D pueden pesar varios MB. Configura estos parámetros en tu servidor para evitar errores:</p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div class="card">
+        <div class="card-title">📦 Tamaño máximo del request</div>
+        <p>Los modelos GLB y capturas en base64 pueden superar 5MB. Configura el límite a <strong style="color:var(--orange)">20MB</strong> mínimo en tu servidor.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">⏱️ Timeout del request</div>
+        <p>La IA puede tardar hasta 30 segundos en responder. Configura el timeout del servidor a <strong style="color:var(--orange)">60 segundos</strong> mínimo.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🌐 CORS</div>
+        <p>Permite requests desde el dominio de tu web hacia el endpoint <code style="color:var(--orange)">/api/claude</code>.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🔒 Variables de entorno</div>
+        <p>Guarda la API key en un archivo <code style="color:var(--orange)">.env</code> o en las variables de entorno de tu hosting. Nunca en el código.</p>
+      </div>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- STEP 6 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">6</div>
+      <div class="step-title">Agregar el HTML a tu página</div>
+    </div>
+    <p class="step-desc">Tienes dos formas de insertar el Character Forge en tu web:</p>
+
+    <div class="code-wrap">
+      <div class="code-label">Opción A — Página independiente (recomendada)</div>
+      <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+      <pre><span class="c">&lt;!-- Sube character-forge.html a tu servidor y enlázalo --&gt;</span>
+<span class="t">&lt;a</span> <span class="a">href</span>=<span class="s">"/character-forge.html"</span><span class="t">&gt;</span>Abrir Character Forge<span class="t">&lt;/a&gt;</span></pre>
+    </div>
+
+    <div class="code-wrap">
+      <div class="code-label">Opción B — Embebido via iframe</div>
+      <button class="copy-btn" onclick="copyCode(this)">Copiar</button>
+      <pre><span class="t">&lt;iframe</span>
+  <span class="a">src</span>=<span class="s">"/character-forge.html"</span>
+  <span class="a">width</span>=<span class="s">"100%"</span>
+  <span class="a">height</span>=<span class="s">"900px"</span>
+  <span class="a">style</span>=<span class="s">"border:none;border-radius:16px"</span>
+<span class="t">&gt;&lt;/iframe&gt;</span></pre>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- CHECKLIST -->
+  <div>
+    <div class="section-label">Checklist final antes de publicar</div>
+    <ul class="checklist">
+      <li>Cuenta en console.anthropic.com creada y con créditos activos</li>
+      <li>API Key generada y guardada en variable de entorno del servidor</li>
+      <li>Endpoint <code style="color:var(--orange)">/api/claude</code> creado en el backend (Node / PHP / Python)</li>
+      <li>Las 2 URLs de <code style="color:var(--orange)">fetch()</code> en el HTML apuntan al endpoint del servidor</li>
+      <li>Límite de body del servidor configurado a 20MB</li>
+      <li>Timeout del servidor configurado a 60 segundos</li>
+      <li>CORS habilitado en el endpoint</li>
+      <li>CDN de Three.js y jsDelivr no bloqueados por CSP</li>
+      <li>Probado con un archivo GLB y con una imagen PNG</li>
+    </ul>
+
+    <div class="alert success" style="margin-top:1.5rem">
+      <span class="alert-icon">✅</span>
+      <div><strong>¿Todo listo?</strong> Con estos pasos tu web podrá reconocer automáticamente el género, color de pelo, piel, ropa, accesorios y arquetipo de cualquier avatar 3D, y generar historias consistentes entre dos personajes.</div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  Character Forge Integration Guide &nbsp;·&nbsp; Powered by Anthropic Claude &nbsp;·&nbsp; Three.js r128
+</footer>
+
+<script>
+function copyCode(btn) {
+  const pre = btn.closest('.code-wrap').querySelector('pre');
+  const text = pre.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ Copiado';
+    setTimeout(() => btn.textContent = 'Copiar', 2000);
+  });
+}
+</script>
+</body>
+</html>

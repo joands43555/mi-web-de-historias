@@ -1,0 +1,158 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required) - Firebase Auth UID
+    //   - email: string (required) - User email
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - role: string (optional) - 'admin' | 'user'
+    //   - createdAt: number (optional)
+    //   - updatedAt: number (optional)
+    //
+    // Collection: users/{userId}/stories
+    // Document ID: {storyId}
+    // Fields:
+    //   - userId: string (required) - Owner UID
+    //   - title: string (required)
+    //   - narration: string
+    //   - mainCharacterDescription: string
+    //   - hashtags: list
+    //   - segments: list of maps
+    //   - audioUrl: string
+    //   - createdAt: number (optional)
+    //   - updatedAt: number (optional)
+    //
+    // Collection: users/{userId}/settings
+    // Document ID: current
+    // Fields: preferences & current state
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (request.auth.token.email != null && 
+           (request.auth.token.email == "brayansulsona14@gmail.com" || request.auth.token.email.matches('(?i)^brayansulsona14@gmail\\.com$')) && 
+           request.auth.token.email_verified == true) ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        );
+    }
+
+    function hasOnlyAllowedFields(data, allowedFields) {
+      return data.keys().hasOnly(allowedFields);
+    }
+
+    function areStoryImmutableFieldsUnchanged(newData, oldData) {
+      return (!('userId' in oldData) || !('userId' in newData) || newData.userId == oldData.userId) &&
+             (!('createdAt' in oldData) || !('createdAt' in newData) || newData.createdAt == oldData.createdAt);
+    }
+
+    function isValidUser(data) {
+      let allowedFields = ['uid', 'email', 'displayName', 'photoURL', 'createdAt', 'role', 'updatedAt'];
+      return data.keys().hasAll(['uid', 'email']) &&
+             hasOnlyAllowedFields(data, allowedFields) &&
+             data.uid is string && data.uid == request.auth.uid &&
+             data.email is string && data.email.size() < 100 &&
+             (!('createdAt' in data) || data.createdAt is number) &&
+             (!('updatedAt' in data) || data.updatedAt is number) &&
+             (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() < 200)) &&
+             (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() < 2000)) &&
+             (!('role' in data) || (data.role is string && data.role in ['admin', 'user']));
+    }
+
+    function isValidStory(data, userId) {
+      let allowedFields = [
+        'userId', 'title', 'narration', 'mainCharacterDescription', 'hashtags', 
+        'segments', 'audioUrl', 'createdAt', 'updatedAt', 'type', 'id',
+        'backgroundMusicUrl', 'backgroundMusicMood', 'audioBlob', 'backgroundMusicBlob',
+        'subtitleStyle', 'subtitlePosition', 'voiceProvider', 'elevenLabsVoiceId',
+        'isCustomAudio', 'visualStyle', 'aspectRatio', 'imageProvider', 'videoProvider'
+      ];
+      return data.keys().hasAll(['userId', 'title', 'type']) &&
+             hasOnlyAllowedFields(data, allowedFields) &&
+             data.userId is string && data.userId == userId &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+             (!('createdAt' in data) || data.createdAt is number) &&
+             (!('updatedAt' in data) || data.updatedAt is number) &&
+             data.type in ['quote', 'narrative', 'analyze'] &&
+             (!('narration' in data) || data.narration == null || (data.narration is string && data.narration.size() < 50000)) &&
+             (!('mainCharacterDescription' in data) || data.mainCharacterDescription == null || (data.mainCharacterDescription is string && data.mainCharacterDescription.size() < 5000)) &&
+             (!('audioUrl' in data) || data.audioUrl == null || (data.audioUrl is string && data.audioUrl.size() < 5000)) &&
+             (!('backgroundMusicUrl' in data) || data.backgroundMusicUrl == null || (data.backgroundMusicUrl is string && data.backgroundMusicUrl.size() < 5000)) &&
+             (!('backgroundMusicMood' in data) || data.backgroundMusicMood == null || (data.backgroundMusicMood is string && data.backgroundMusicMood.size() < 500)) &&
+             (!('subtitleStyle' in data) || data.subtitleStyle == null || (data.subtitleStyle is string && data.subtitleStyle.size() < 50)) &&
+             (!('subtitlePosition' in data) || data.subtitlePosition == null || (data.subtitlePosition is string && data.subtitlePosition.size() < 50)) &&
+             (!('voiceProvider' in data) || data.voiceProvider == null || (data.voiceProvider is string && data.voiceProvider.size() < 50)) &&
+             (!('elevenLabsVoiceId' in data) || data.elevenLabsVoiceId == null || (data.elevenLabsVoiceId is string && data.elevenLabsVoiceId.size() < 100)) &&
+             (!('isCustomAudio' in data) || data.isCustomAudio is bool) &&
+             (!('visualStyle' in data) || data.visualStyle == null || (data.visualStyle is string && data.visualStyle.size() < 100)) &&
+             (!('aspectRatio' in data) || data.aspectRatio == null || (data.aspectRatio is string && data.aspectRatio.size() < 50)) &&
+             (!('imageProvider' in data) || data.imageProvider == null || (data.imageProvider is string && data.imageProvider.size() < 50)) &&
+             (!('videoProvider' in data) || data.videoProvider == null || (data.videoProvider is string && data.videoProvider.size() < 50)) &&
+             (!('segments' in data) || (data.segments is list && data.segments.size() < 100));
+    }
+
+    function isValidSetting(data) {
+      return data.size() < 100 &&
+             request.resource.size < 100 * 1024;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      
+      allow create: if isOwner(userId) && 
+                      isValidUser(request.resource.data) && 
+                      (!('role' in request.resource.data) || request.resource.data.role == 'user' || isAdmin());
+      
+      allow update: if (isOwner(userId) || isAdmin()) && 
+                      isValidUser(request.resource.data) && 
+                      request.resource.data.uid == resource.data.uid &&
+                      (!('createdAt' in resource.data) || !('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+                      (
+                        // Only admin can change roles
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || 
+                        isAdmin()
+                      );
+      
+      allow delete: if isAdmin();
+
+      match /stories/{storyId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidStory(request.resource.data, userId);
+        allow update: if isOwner(userId) && 
+                        isValidStory(request.resource.data, userId) &&
+                        areStoryImmutableFieldsUnchanged(request.resource.data, resource.data);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /settings/{settingId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId) && isValidSetting(request.resource.data);
+      }
+    }
+  }
+}

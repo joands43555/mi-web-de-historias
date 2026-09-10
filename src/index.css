@@ -1,0 +1,20 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Playfair Display", serif;
+  --animate-ken-burns: ken-burns 20s ease-in-out infinite;
+  --animate-cinematic-pan: cinematic-pan 5s ease-in-out infinite;
+}
+
+@keyframes ken-burns {
+  0% { transform: scale(1) translate(0, 0); }
+  50% { transform: scale(1.15) translate(-1%, -1%); }
+  100% { transform: scale(1) translate(0, 0); }
+}
+
+@keyframes cinematic-pan {
+  0% { transform: scale(1) translateX(0); }
+  50% { transform: scale(1.15) translateX(-15px); }
+  100% { transform: scale(1) translateX(0); }
+}

@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about the registered user",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "photoURL": { "type": "string", "description": "User profile photo URL" },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "Role of the user" },
+        "createdAt": { "type": "number", "description": "Timestamp of account creation" },
+        "updatedAt": { "type": "number", "description": "Timestamp of profile update" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "A generated story with segments",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner UID" },
+        "title": { "type": "string", "description": "Story title" },
+        "narration": { "type": "string", "description": "Full narration text" },
+        "mainCharacterDescription": { "type": "string", "description": "Description of the main character" },
+        "hashtags": { "type": "array", "items": { "type": "string" } },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "text": { "type": "string" },
+              "imagePrompt": { "type": "string" },
+              "cameraAngle": { "type": "string" },
+              "imageUrl": { "type": "string" },
+              "videoUrl": { "type": "string" },
+              "audioUrl": { "type": "string" },
+              "duration": { "type": "number" }
+            }
+          }
+        },
+        "audioUrl": { "type": "string" },
+        "backgroundMusicUrl": { "type": "string" },
+        "backgroundMusicMood": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "type": { "type": "string", "enum": ["quote", "narrative", "analyze"] },
+        "subtitleStyle": { "type": "string", "enum": ["classic", "minimal", "bold", "cinematic", "none"] },
+        "subtitlePosition": { "type": "string", "enum": ["top", "middle", "bottom"] },
+        "voiceProvider": { "type": "string", "enum": ["gemini", "elevenlabs"] },
+        "elevenLabsVoiceId": { "type": "string" },
+        "isCustomAudio": { "type": "boolean" },
+        "visualStyle": { "type": "string" },
+        "aspectRatio": { "type": "string" }
+      },
+      "required": ["userId", "title", "type"]
+    },
+    "Settings": {
+      "title": "User Settings",
+      "description": "User preferences and current app state",
+      "type": "object",
+      "properties": {
+        "prompt": { "type": "string" },
+        "characterDesc": { "type": "string" },
+        "imageSize": { "type": "string" },
+        "videoAspectRatio": { "type": "string" },
+        "visualStyle": { "type": "string" },
+        "dynamicAngles": { "type": "boolean" },
+        "useExactText": { "type": "boolean" },
+        "storyDuration": { "type": "string" },
+        "modelQuality": { "type": "string" },
+        "selectedVoice": { "type": "string" },
+        "imageProvider": { "type": "string" },
+        "videoProvider": { "type": "string" },
+        "burnTextIntoImages": { "type": "boolean" },
+        "subtitleStyle": { "type": "string" },
+        "subtitlePosition": { "type": "string" },
+        "consistencyLevel": { "type": "string" },
+        "savedCharacters": { "type": "array", "items": { "type": "object" } },
+        "totalCost": { "type": "number" },
+        "costBreakdown": { "type": "object" },
+        "visualAnchor": { "type": "string" },
+        "visualAnchorImages": { "type": "array", "items": { "type": "string" } },
+        "manualApiKey": { "type": "string" },
+        "currentStoryId": { "type": "string" },
+        "isAuthorized": { "type": "boolean" },
+        "apiKeySelected": { "type": "boolean" },
+        "sidebarTab": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/users/{userId}/stories/{storyId}": {
+      "schema": "Story",
+      "description": "Stories created by the user"
+    },
+    "/users/{userId}/settings/current": {
+      "schema": "Settings",
+      "description": "Current user settings and state"
+    }
+  }
+}
