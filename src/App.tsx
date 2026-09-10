@@ -285,25 +285,37 @@ function pcmToWav(pcmBase64: string, sampleRate: number = 24000): { url: string;
   return { url: URL.createObjectURL(blob), blob };
 }
 
-// --- Groq (motor de texto: historias, guiones y prompts) ---
+// --- Groq (motor de texto/visión: historias, guiones, prompts y análisis de referencias) ---
+
+interface GroqContentPart {
+  type: "text" | "image_url";
+  text?: string;
+  image_url?: { url: string };
+}
 
 interface GroqChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | GroqContentPart[];
 }
 
 async function callGroq(messages: GroqChatMessage[], model: string = "openai/gpt-oss-120b"): Promise<string> {
+  const body: any = {
+    model,
+    messages,
+    temperature: 0.9,
+    max_completion_tokens: 16000,
+    response_format: { type: "json_object" }
+  };
+  // reasoning_effort solo aplica a los modelos de razonamiento (openai/gpt-oss-*),
+  // no a los modelos de visión (qwen3.x), que no soportan este parámetro.
+  if (model.startsWith("openai/gpt-oss")) {
+    body.reasoning_effort = "low";
+  }
+
   const response = await fetch("/api/groq", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.9,
-      max_completion_tokens: 16000,
-      reasoning_effort: "low",
-      response_format: { type: "json_object" }
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -2115,16 +2127,17 @@ const COSTS = {
         : "";
 
       const holographicSoulInstruction = activeStyle === "HOLOGRAPHIC SOUL"
-        ? `ESPECIAL PARA HOLOGRAPHIC SOUL (OBLIGATORIO Y PRIORITARIO SOBRE CUALQUIER OTRA INSTRUCCIÓN DE APARIENCIA): El personaje NO debe describirse con piel realista, ropa de tela realista, ni fotografía realista de ningún tipo. TODO el cuerpo (piel, cabello, silueta) y TODA la ropa (incluyendo calzado) deben describirse como una silueta SÓLIDA, TRANSLÚCIDA, hecha de energía luminosa/holográfica difusa (glowing volumetric energy silhouette), como un alma hecha de luz. NO es una rejilla ni malla poligonal (wireframe grid) — es un brillo suave, uniforme y difuso, sin líneas de rejilla visibles.
-           COLOR ÚNICO: Elige UN color de energía brillante para esta historia (ej. ámbar/naranja, cian, magenta, rojo) y aplícalo de forma IDÉNTICA a todo el cuerpo, cabello y ropa del personaje en TODOS los segmentos. No mezcles varios colores en el mismo personaje.
+        ? `ESPECIAL PARA HOLOGRAPHIC SOUL (OBLIGATORIO Y PRIORITARIO SOBRE CUALQUIER OTRA INSTRUCCIÓN DE APARIENCIA): El personaje SÍ debe llevar ropa y calzado reconocibles (ej. top, falda, pantalón, tacones, sneakers) y SÍ debe tener un peinado/silueta de cabello definida — pero TODO (piel, cabello, ropa, calzado) debe estar hecho del MISMO material: una silueta SÓLIDA, TRANSLÚCIDA, de energía luminosa/holográfica difusa (glowing volumetric energy), como si la piel, el cabello y la ropa fueran de luz. NO es fotografía realista, NO es rejilla ni malla poligonal (wireframe grid) — es un brillo suave, uniforme y difuso, sin líneas de rejilla visibles, pero SÍ deben notarse las formas y pliegues de las prendas y del peinado dentro del brillo.
+           COLOR ÚNICO: Elige UN color de energía brillante para esta historia (ej. ámbar/naranja, cian, magenta, rojo) y aplícalo de forma IDÉNTICA a piel, cabello y ropa del personaje en TODOS los segmentos. No mezcles varios colores en el mismo personaje.
            ENTORNO: El fondo debe ser oscuro (negro o casi negro) y minimalista para que resalte el brillo del personaje. No describas muebles, decoración ni entornos realistas con detalle fotográfico; a lo sumo formas oscuras y difusas de fondo.
+           VARIEDAD: Define un diseño de personaje único (silueta corporal, peinado, outfit) al inicio de la historia y mantenlo IDÉNTICO en todos los segmentos, cambiando solo la pose y el encuadre.
            PROHIBIDO (CRÍTICO): NO incluyas números, letras, letreros de neón ni texto de ningún tipo en la imagen. NO incluyas coches ni vehículos. NO uses las palabras "futurista", "futuristic", "sci-fi", "cyberpunk" en la descripción (describe el efecto visual, no lo etiquetes con esas palabras).
-           Usa términos como 'glowing volumetric energy silhouette', 'translucent light being', 'soft holographic glow', 'dark ambient background', '8k'.`
+           Usa términos como 'glowing volumetric energy silhouette', 'translucent light being wearing a glowing outfit', 'soft holographic glow', 'dark ambient background', '8k'.`
         : "";
 
-      // Groq (Llama 3.3 70B) - motor de texto para historias y prompts
+      // Groq - motor de texto/visión para historias y prompts
       const visualAnchorNote = visualAnchorImages.length > 0
-        ? `NOTA: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia de personaje, pero este motor de texto no puede verlas. Inventa una descripción física ÚNICA, DETALLADA y CONSISTENTE del personaje (color de pelo, rasgos, estilo) y mantenla IDÉNTICA en todos los segmentos.`
+        ? `REFERENCIAS VISUALES ADJUNTAS: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia de personaje/estilo en este mensaje. ANALIZA CUIDADOSAMENTE cada imagen (rasgos faciales, color y estilo de pelo, tono de piel o color de energía si es un estilo holográfico/neón, vestimenta, calzado, complexión corporal) y describe ese MISMO personaje de forma EXTREMADAMENTE DETALLADA y CONSISTENTE en el campo 'imagePrompt' de TODOS los segmentos. NO inventes un personaje distinto al de las imágenes. NO contradigas lo que ves en las imágenes.`
         : "";
 
       const generateWithModel = async (modelName: string) => {
@@ -2192,20 +2205,39 @@ const COSTS = {
             ]
           }`;
 
+        const userContent: GroqContentPart[] = [{ type: "text", text: textPrompt }];
+        if (visualAnchorImages.length > 0) {
+          // qwen3.6-27b admite hasta 5 imágenes por request
+          visualAnchorImages.slice(0, 5).forEach(img => {
+            userContent.push({ type: "image_url", image_url: { url: img } });
+          });
+        }
+
         const groqResponse = await withRetry(() => callGroq([
           { role: "system", content: "Eres un guionista y director de arte experto en contenido viral para redes sociales. SIEMPRE respondes con JSON válido y nada más, sin explicaciones ni markdown." },
-          { role: "user", content: textPrompt }
+          { role: "user", content: userContent }
         ], modelName));
 
         return groqResponse;
       };
 
+      const hasReferenceImages = visualAnchorImages.length > 0;
       let rawText: string;
       try {
-        rawText = await generateWithModel("openai/gpt-oss-120b");
+        rawText = await generateWithModel(hasReferenceImages ? "qwen/qwen3.6-27b" : "openai/gpt-oss-120b");
       } catch (err: any) {
-        console.warn("Fallo con openai/gpt-oss-120b, probando openai/gpt-oss-20b...", err);
-        rawText = await generateWithModel("openai/gpt-oss-20b");
+        console.warn(`Fallo con el modelo principal, probando respaldo...`, err);
+        try {
+          rawText = await generateWithModel(hasReferenceImages ? "qwen/qwen3.8-27b" : "openai/gpt-oss-20b");
+        } catch (err2: any) {
+          if (hasReferenceImages) {
+            // Último recurso: seguir sin imágenes en vez de fallar del todo.
+            console.warn("Fallaron ambos modelos de visión, generando sin analizar las imágenes...", err2);
+            rawText = await generateWithModel("openai/gpt-oss-120b");
+          } else {
+            throw err2;
+          }
+        }
       }
 
       if (!rawText) {
