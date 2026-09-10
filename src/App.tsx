@@ -300,6 +300,8 @@ async function callGroq(messages: GroqChatMessage[], model: string = "openai/gpt
       model,
       messages,
       temperature: 0.9,
+      max_completion_tokens: 16000,
+      reasoning_effort: "low",
       response_format: { type: "json_object" }
     })
   });
@@ -317,7 +319,11 @@ async function callGroq(messages: GroqChatMessage[], model: string = "openai/gpt
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;
+  const finishReason = data.choices?.[0]?.finish_reason;
   if (!content) throw new Error("Groq no devolvió contenido en la respuesta.");
+  if (finishReason === "length") {
+    throw new Error("La respuesta de Groq se cortó por exceder el límite de tokens (JSON incompleto). Prueba con una duración/número de segmentos menor.");
+  }
   return content;
 }
 
