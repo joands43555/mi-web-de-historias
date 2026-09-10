@@ -168,6 +168,34 @@ async function startServer() {
     }
   });
 
+  // API Route for Groq (OpenAI-compatible Proxy) - used for story/prompt generation
+  app.post("/api/groq", async (req, res) => {
+    const API_KEY = process.env.GROQ_API_KEY;
+
+    if (!API_KEY) {
+      return res.status(500).json({ error: "GROQ_API_KEY is not configured on the server." });
+    }
+
+    try {
+      const response = await axios.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        req.body,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${API_KEY}`
+          }
+        }
+      );
+      res.json(response.data);
+    } catch (error: any) {
+      const status = error.response?.status || 500;
+      const errorData = error.response?.data || { error: error.message };
+      console.error(`Groq API Error (${status}):`, JSON.stringify(errorData));
+      res.status(status).json(errorData);
+    }
+  });
+
   // API Route for Claude (Anthropic Proxy)
   app.post("/api/claude", async (req, res) => {
     const API_KEY = process.env.ANTHROPIC_API_KEY;
