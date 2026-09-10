@@ -2193,7 +2193,7 @@ const COSTS = {
           ${visualAnchorNote}
           Asegúrate de que cada segmento sea visualmente espectacular, artístico y de calidad suprema.
 
-          FORMATO DE SALIDA (OBLIGATORIO): Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional antes ni después, sin markdown, con EXACTAMENTE esta forma:
+          FORMATO DE SALIDA (OBLIGATORIO, SIN EXCEPCIONES): Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional antes ni después, sin markdown, sin envolver el JSON en otra clave. La clave raíz "segments" es OBLIGATORIA y debe ser un array con AL MENOS un elemento, con EXACTAMENTE esta forma (no anides este objeto dentro de otra clave como "story" o "data", no lo devuelvas como array suelto):
           {
             "title": string,
             "narration": string,
@@ -2249,9 +2249,33 @@ const COSTS = {
       }
 
       const data = parseGroqJson(rawText);
-      
+
+      // Groq no fuerza un schema estricto como Gemini, así que a veces el
+      // array de segmentos viene anidado bajo una clave distinta o el
+      // modelo devuelve directamente un array. Intentamos varias formas
+      // razonables antes de fallar con un mensaje claro.
+      let rawSegments: any = data?.segments;
+      if (!Array.isArray(rawSegments)) {
+        if (Array.isArray(data)) {
+          rawSegments = data;
+        } else if (Array.isArray(data?.story?.segments)) {
+          rawSegments = data.story.segments;
+        } else if (Array.isArray(data?.data?.segments)) {
+          rawSegments = data.data.segments;
+        } else {
+          const firstArrayValue = data && typeof data === 'object'
+            ? Object.values(data).find((v: any) => Array.isArray(v) && v.length > 0 && typeof v[0] === 'object')
+            : null;
+          rawSegments = firstArrayValue || null;
+        }
+      }
+      if (!Array.isArray(rawSegments) || rawSegments.length === 0) {
+        console.error("Respuesta de Groq sin 'segments' válido:", data);
+        throw new Error("Groq devolvió una respuesta con un formato inesperado (sin 'segments'). Intenta generar de nuevo; si persiste, prueba con una duración/número de segmentos menor.");
+      }
+
       addCost(COSTS.STORY_GEN, 'stories');
-      const formattedSegments = data.segments.map((s: any, i: number) => ({
+      const formattedSegments = rawSegments.map((s: any, i: number) => ({
         ...s,
         text: s.text || `Segmento ${i + 1} de la historia.`,
         id: `seg-${i}-${Date.now()}`
