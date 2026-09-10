@@ -1172,6 +1172,7 @@ export default function App() {
   });
   const [story, setStoryState] = useState<Story | null>(null);
   const storyRef = React.useRef<Story | null>(null);
+  const saveContextRef = React.useRef<{ user: FirebaseUser | null; currentStoryId: string | null }>({ user: null, currentStoryId: null });
 
   // Sync helper to ensure ref is always up to date synchronously
   const setStory = (update: Story | null | ((prev: Story | null) => Story | null)) => {
@@ -1187,28 +1188,59 @@ export default function App() {
     }
   };
 
+  const buildStoryToSave = (s: Story) => ({
+    ...s,
+    segments: s.segments.map(seg => {
+      const { videoBlob, audioBlob, ...rest } = seg;
+      return {
+        ...rest,
+        videoUrl: seg.videoUrl?.startsWith('blob:') ? null : (seg.videoUrl ?? null),
+        audioUrl: seg.audioUrl?.startsWith('blob:') ? null : (seg.audioUrl ?? null),
+      };
+    }),
+    audioUrl: s.audioUrl?.startsWith('blob:') ? null : (s.audioUrl ?? null),
+    backgroundMusicUrl: s.backgroundMusicUrl?.startsWith('blob:') ? null : (s.backgroundMusicUrl ?? null),
+  });
+
   useEffect(() => {
     if (story && currentStoryId && user) {
       const timeout = setTimeout(() => {
-        // Prepare story for saving (remove blob URLs and Blobs)
-        const storyToSave = {
-          ...story,
-          segments: story.segments.map(seg => {
-            const { videoBlob, audioBlob, ...rest } = seg;
-            return {
-              ...rest,
-              videoUrl: seg.videoUrl?.startsWith('blob:') ? null : (seg.videoUrl ?? null),
-              audioUrl: seg.audioUrl?.startsWith('blob:') ? null : (seg.audioUrl ?? null),
-            };
-          }),
-          audioUrl: story.audioUrl?.startsWith('blob:') ? null : (story.audioUrl ?? null),
-          backgroundMusicUrl: story.backgroundMusicUrl?.startsWith('blob:') ? null : (story.backgroundMusicUrl ?? null),
-        };
-        updateStoryInDb(storyToSave);
-      }, 3000);
+        updateStoryInDb(buildStoryToSave(story));
+      }, 1500);
       return () => clearTimeout(timeout);
     }
   }, [story, currentStoryId, user]);
+
+  // Mantiene refs sincronizados para poder hacer un guardado de emergencia
+  // (ver más abajo) sin depender de closures desactualizados.
+  useEffect(() => {
+    saveContextRef.current = { user, currentStoryId };
+  }, [user, currentStoryId]);
+
+  // Guardado de emergencia: si la pestaña se va a cerrar, recargar, o pasa a
+  // segundo plano (típico en móviles) mientras hay un guardado pendiente por
+  // el debounce de arriba, lo disparamos de inmediato para no perder los
+  // últimos cambios/la historia recién generada.
+  useEffect(() => {
+    const flushPendingSave = () => {
+      const { user: u, currentStoryId: csid } = saveContextRef.current;
+      const currentStory = storyRef.current;
+      if (u && csid && currentStory) {
+        updateStoryInDb(buildStoryToSave(currentStory));
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPendingSave();
+    };
+    window.addEventListener('beforeunload', flushPendingSave);
+    window.addEventListener('pagehide', flushPendingSave);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('beforeunload', flushPendingSave);
+      window.removeEventListener('pagehide', flushPendingSave);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
 
   // Load current story if it changes via settings sync
   useEffect(() => {
@@ -1347,6 +1379,20 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
+  // Guardado INMEDIATO (sin debounce) de currentStoryId: este es el dato crítico
+  // que le dice a la app qué historia cargar al volver a entrar. Antes vivía
+  // metido en el guardado general de ajustes con 5s de espera, así que si
+  // recargabas la página justo después de generar/cambiar de historia (por
+  // ejemplo, porque Render acaba de redesplegar un cambio), ese ID nunca
+  // llegaba a guardarse y la app "olvidaba" el proyecto en curso.
+  useEffect(() => {
+    if (!user || !isSettingsLoaded) return;
+    const settingsRef = doc(db, 'users', user.uid, 'settings', 'current');
+    setDoc(settingsRef, { currentStoryId, updatedAt: Date.now() }, { merge: true }).catch(err => {
+      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/settings/current`);
+    });
+  }, [user, isSettingsLoaded, currentStoryId]);
+
   // Debounced save to Firestore
   useEffect(() => {
     if (!user || !isSettingsLoaded) return;
@@ -1379,7 +1425,6 @@ export default function App() {
         visualAnchor,
         visualAnchorImages,
         manualApiKey,
-        currentStoryId,
         isAuthorized,
         apiKeySelected,
         sidebarTab,
@@ -1388,7 +1433,7 @@ export default function App() {
       setDoc(settingsRef, cleanSettings, { merge: true }).catch(err => {
         handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/settings/current`);
       });
-    }, 5000); // 5s debounce for settings
+    }, 5000); // 5s debounce for settings (no crítico: prompt, preferencias, etc. — currentStoryId ya se guarda aparte e inmediato arriba)
 
     return () => clearTimeout(timeout);
   }, [
@@ -1396,28 +1441,9 @@ export default function App() {
     dynamicAngles, useExactText, storyDuration, modelQuality, selectedVoice,
     imageProvider, videoProvider, burnTextIntoImages, subtitleStyle,
     subtitlePosition, consistencyLevel, savedCharacters, totalCost,
-    costBreakdown, visualAnchor, visualAnchorImages, manualApiKey, currentStoryId,
+    costBreakdown, visualAnchor, visualAnchorImages, manualApiKey,
     isAuthorized, apiKeySelected, sidebarTab
   ]);
-
-  // Debounced story save to Firestore
-  useEffect(() => {
-    if (!user || !story || !story.id) return;
-
-    const timeout = setTimeout(() => {
-      const storyRef = doc(db, 'users', user.uid, 'stories', story.id!);
-      const cleanStory = sanitizeForFirestore({
-        ...story,
-        userId: user.uid,
-        updatedAt: Date.now()
-      });
-      setDoc(storyRef, cleanStory, { merge: true }).catch(err => {
-        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/stories/${story.id}`);
-      });
-    }, 10000); // 10s debounce for story (larger payload)
-
-    return () => clearTimeout(timeout);
-  }, [user, story]);
 
   async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5, delay = 3000): Promise<T> {
     let lastError: any;
