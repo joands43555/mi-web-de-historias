@@ -292,7 +292,7 @@ interface GroqChatMessage {
   content: string;
 }
 
-async function callGroq(messages: GroqChatMessage[], model: string = "llama-3.3-70b-versatile"): Promise<string> {
+async function callGroq(messages: GroqChatMessage[], model: string = "openai/gpt-oss-120b"): Promise<string> {
   const response = await fetch("/api/groq", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2186,10 +2186,10 @@ const COSTS = {
 
       let rawText: string;
       try {
-        rawText = await generateWithModel("llama-3.3-70b-versatile");
+        rawText = await generateWithModel("openai/gpt-oss-120b");
       } catch (err: any) {
-        console.warn("Fallo con llama-3.3-70b-versatile, probando llama-3.1-8b-instant...", err);
-        rawText = await generateWithModel("llama-3.1-8b-instant");
+        console.warn("Fallo con openai/gpt-oss-120b, probando openai/gpt-oss-20b...", err);
+        rawText = await generateWithModel("openai/gpt-oss-20b");
       }
 
       if (!rawText) {
