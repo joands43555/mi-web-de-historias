@@ -1,44 +1,6 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: users
-    // Document ID: {userId}
-    // Fields:
-    //   - uid: string (required) - Firebase Auth UID
-    //   - email: string (required) - User email
-    //   - displayName: string (optional)
-    //   - photoURL: string (optional)
-    //   - role: string (optional) - 'admin' | 'user'
-    //   - createdAt: number (optional)
-    //   - updatedAt: number (optional)
-    //
-    // Collection: users/{userId}/stories
-    // Document ID: {storyId}
-    // Fields:
-    //   - userId: string (required) - Owner UID
-    //   - title: string (required)
-    //   - narration: string
-    //   - mainCharacterDescription: string
-    //   - hashtags: list
-    //   - segments: list of maps
-    //   - audioUrl: string
-    //   - createdAt: number (optional)
-    //   - updatedAt: number (optional)
-    //
-    // Collection: users/{userId}/settings
-    // Document ID: current
-    // Fields: preferences & current state
-    //
-    // ===============================================================
-
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-    
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -117,10 +79,6 @@ service cloud.firestore {
              request.resource.size < 100 * 1024;
     }
 
-    // ===============================================================
-    // Rules
-    // ===============================================================
-
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
       
@@ -133,7 +91,6 @@ service cloud.firestore {
                       request.resource.data.uid == resource.data.uid &&
                       (!('createdAt' in resource.data) || !('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
                       (
-                        // Only admin can change roles
                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || 
                         isAdmin()
                       );
