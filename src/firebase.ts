@@ -61,8 +61,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   }
+  // NOTA: Solo se registra el error, ya no se lanza (throw). Este handler se usa
+  // dentro de callbacks de error de onSnapshot/catch que nadie más captura -
+  // lanzar aquí interrumpía el código que se ejecuta justo después (por ejemplo,
+  // dejaba la pantalla de "Sincronizando con la Nube" pegada para siempre).
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
 }
 
 /**
