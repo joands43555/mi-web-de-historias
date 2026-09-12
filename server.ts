@@ -170,30 +170,47 @@ async function startServer() {
 
   // API Route for Groq (OpenAI-compatible Proxy) - used for story/prompt generation
   app.post("/api/groq", async (req, res) => {
-    const API_KEY = process.env.GROQ_API_KEY;
+    // Soporta hasta 2 API keys de Groq (por si la primera agota su cuota
+    // gratuita). GROQ_API_KEY_2 es opcional: si no está configurada, se
+    // comporta igual que antes (solo intenta con GROQ_API_KEY).
+    const apiKeys = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2].filter(Boolean) as string[];
 
-    if (!API_KEY) {
+    if (apiKeys.length === 0) {
       return res.status(500).json({ error: "GROQ_API_KEY is not configured on the server." });
     }
 
-    try {
-      const response = await axios.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        req.body,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${API_KEY}`
+    let lastError: any = null;
+    for (let i = 0; i < apiKeys.length; i++) {
+      try {
+        const response = await axios.post(
+          "https://api.groq.com/openai/v1/chat/completions",
+          req.body,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${apiKeys[i]}`
+            }
           }
+        );
+        return res.json(response.data);
+      } catch (error: any) {
+        const status = error.response?.status || 500;
+        lastError = error;
+        console.error(`Groq API Error con key #${i + 1} (${status}):`, JSON.stringify(error.response?.data || error.message));
+        // Solo probamos la siguiente key si esta se quedó sin cuota/límite de velocidad (429).
+        // Cualquier otro error (400, 401, etc.) se devuelve de inmediato, sin sentido reintentar con otra key.
+        if (status !== 429 || i === apiKeys.length - 1) {
+          const errorData = error.response?.data || { error: error.message };
+          return res.status(status).json(errorData);
         }
-      );
-      res.json(response.data);
-    } catch (error: any) {
-      const status = error.response?.status || 500;
-      const errorData = error.response?.data || { error: error.message };
-      console.error(`Groq API Error (${status}):`, JSON.stringify(errorData));
-      res.status(status).json(errorData);
+        console.warn(`Key #${i + 1} de Groq alcanzó su límite (429), probando con la siguiente key...`);
+      }
     }
+
+    // No debería llegar aquí, pero por si acaso:
+    const status = lastError?.response?.status || 500;
+    const errorData = lastError?.response?.data || { error: lastError?.message || "Unknown Groq error" };
+    res.status(status).json(errorData);
   });
 
   // API Route for Claude (Anthropic Proxy)
