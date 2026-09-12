@@ -1493,9 +1493,12 @@ export default function App() {
 
         if (msg.includes("429") || errorStr.includes("429") || msg.includes("quota") || errorStr.includes("quota")) {
           setIsQuotaExceeded(true);
-          const quotaMsg = isPaidKey 
-            ? "Has alcanzado el límite de tu cuota de pago o de velocidad. Por favor, revisa tu consola de Google Cloud Billing."
-            : "Has agotado el límite gratuito de Google Gemini (Error 429 / Quota Exceeded). El límite suele resetearse cada minuto para peticiones de texto y cada día para cuotas totales. Por favor, espera un momento o usa una API Key propia en Ajustes.";
+          const isGroqError = msg.includes("groq") || errorStr.includes("groq");
+          const quotaMsg = isGroqError
+            ? "Has alcanzado el límite de velocidad/cuota gratuita de Groq (Error 429). Groq resetea este límite normalmente en menos de un minuto. Espera unos segundos y vuelve a intentar generar la historia."
+            : (isPaidKey 
+                ? "Has alcanzado el límite de tu cuota de pago o de velocidad. Por favor, revisa tu consola de Google Cloud Billing."
+                : "Has agotado el límite gratuito de Google Gemini (Error 429 / Quota Exceeded). El límite suele resetearse cada minuto para peticiones de texto y cada día para cuotas totales. Por favor, espera un momento o usa una API Key propia en Ajustes.");
           setQuotaErrorMessage(quotaMsg);
           throw new Error(quotaMsg);
         }
