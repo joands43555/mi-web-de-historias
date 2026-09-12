@@ -2239,13 +2239,18 @@ const COSTS = {
             ]
           }`;
 
-        const userContent: GroqContentPart[] = [{ type: "text", text: textPrompt }];
-        if (visualAnchorImages.length > 0) {
-          // qwen3.6-27b admite hasta 5 imágenes por request
-          visualAnchorImages.slice(0, 5).forEach(img => {
-            userContent.push({ type: "image_url", image_url: { url: img } });
-          });
-        }
+        // Solo usamos el formato de "content" en arreglo (partes de texto/imagen)
+        // cuando realmente hay imágenes que mandar — el modelo de texto puro
+        // (gpt-oss-120b) rechaza ese formato con un 400 si le llega un arreglo,
+        // aunque solo tenga una parte de texto. Con imágenes sí es necesario
+        // porque así es como el modelo de visión (qwen) recibe cada imagen.
+        const userContent: string | GroqContentPart[] = visualAnchorImages.length > 0
+          ? [
+              { type: "text", text: textPrompt },
+              // qwen3.6-27b admite hasta 5 imágenes por request
+              ...visualAnchorImages.slice(0, 5).map(img => ({ type: "image_url" as const, image_url: { url: img } }))
+            ]
+          : textPrompt;
 
         const groqResponse = await withRetry(() => callGroq([
           { role: "system", content: "Eres un guionista y director de arte experto en contenido viral para redes sociales. SIEMPRE respondes con JSON válido y nada más, sin explicaciones ni markdown." },
