@@ -2132,8 +2132,11 @@ const COSTS = {
       const promptType = type === 'quote' ? "FRASES RÁPIDAS / QUOTES" : "HISTORIA NARRATIVA";
       
       const durationInstruction = storyDuration === "Auto" 
-        ? "Cubre TODA la historia en detalle, sin omitir partes importantes. Crea tantos segmentos como sean necesarios para una narrativa completa (aprox de 10-15 palabras cada segmento)."
+        ? `Cubre TODA la historia en detalle, sin omitir partes importantes. Decide tú mismo cuánto debe durar la narración según lo que el tema realmente necesite para completarse bien (normalmente entre 1 y 3 minutos para contenido de redes sociales, salvo que el tema pida claramente más). 
+           CÁLCULO DE SEGMENTOS (OBLIGATORIO): Una vez decidida la duración de la narración, DIVÍDELA en aproximadamente 10 a 11 segmentos POR CADA MINUTO de narración (ejemplos: ~1:40 min → entre 15 y 18 segmentos; ~1:00 min → 10-12 segmentos; ~2:00 min → 20-22 segmentos). Cada segmento debe cubrir una escena o "beat" narrativo completo (aprox 12-18 palabras) — ESTÁ PROHIBIDO fragmentar una sola escena o emoción en varios segmentos casi idénticos solo para sumar más cantidad. NUNCA generes más de 22 segmentos en modo automático salvo que el tema sea excepcionalmente extenso y realmente lo amerite.`
         : `ES VITAL PARA EL RITMO DEL AUDIO: Tu narración COMPLETA (texto) debe tener EXACTAMENTE EN TOTAL unas ${wordLimits[storyDuration]} palabras (para durar el tiempo exacto). DÍVIDE este texto en EXACTAMENTE ${segmentsToGenerate} segmentos. Cada segmento DEBE TENER entre 12 y 15 palabras como MÁXIMO. ¡PROHIBIDO hacer segmentos largos! Esto asegurará matemáticamente generar 1 imagen por cada ~5 segundos de audio (mínimo 10 por minuto).`;
+
+      const characterIdentificationInstruction = `IDENTIFICACIÓN DE PERSONAJE POR ESCENA (OBLIGATORIO, APLICA A TODAS LAS CATEGORÍAS): Si la historia tiene más de un personaje (ej. un hombre y una mujer, o varios personajes con nombre propio), cada 'imagePrompt' y cada 'videoDescription' DEBE dejar explícito y sin ambigüedad CUÁL personaje aparece en esa escena — usa términos claros como "the man"/"el hombre", "the woman"/"la mujer", o el nombre propio del personaje si la historia se lo dio, en vez de términos genéricos y ambiguos como "the character", "la figura" o "el personaje" cuando pueda haber más de uno. Si la escena incluye a ambos personajes a la vez, dilo explícitamente (ej. "el hombre y la mujer, uno frente al otro"). Si la historia tiene UN SOLO personaje en total, sí puedes usar "el personaje"/"the character" de forma consistente en todos los segmentos.`;
 
       const neonBlueprintInstruction = activeStyle === "Neon Blueprint" || activeStyle === "Neon Pro"
         ? `ESPECIAL PARA ${activeStyle.toUpperCase()}: TODO en la imagen (personajes, ropa, calzado${activeStyle === "Neon Blueprint" ? " y TODO EL ENTORNO" : ""}) debe ser una malla de neón brillante (glowing wireframe mesh). 
@@ -2183,6 +2186,7 @@ const COSTS = {
 
         const textPrompt = `Crea un contenido de ${promptType} de CALIDAD CINEMATOGRÁFICA SUPREMA basado en: "${activePrompt}". 
           ${durationInstruction}
+          ${characterIdentificationInstruction}
           ${neonBlueprintInstruction}
           ${holographicSoulInstruction}
           ${neonNarrativeInstruction}
