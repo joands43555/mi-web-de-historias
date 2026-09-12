@@ -298,14 +298,21 @@ interface GroqChatMessage {
   content: string | GroqContentPart[];
 }
 
-async function callGroq(messages: GroqChatMessage[], model: string = "openai/gpt-oss-120b"): Promise<string> {
+async function callGroq(
+  messages: GroqChatMessage[],
+  model: string = "openai/gpt-oss-120b",
+  options: { maxTokens?: number; jsonMode?: boolean } = {}
+): Promise<string> {
+  const { maxTokens = 16000, jsonMode = true } = options;
   const body: any = {
     model,
     messages,
     temperature: 0.9,
-    max_completion_tokens: 16000,
-    response_format: { type: "json_object" }
+    max_completion_tokens: maxTokens
   };
+  if (jsonMode) {
+    body.response_format = { type: "json_object" };
+  }
   // reasoning_effort solo aplica a los modelos de razonamiento (openai/gpt-oss-*),
   // no a los modelos de visión (qwen3.x), que no soportan este parámetro.
   if (model.startsWith("openai/gpt-oss")) {
@@ -337,6 +344,34 @@ async function callGroq(messages: GroqChatMessage[], model: string = "openai/gpt
     throw new Error("La respuesta de Groq se cortó por exceder el límite de tokens (JSON incompleto). Prueba con una duración/número de segmentos menor.");
   }
   return content;
+}
+
+// Análisis LIVIANO de imágenes de referencia: los modelos de visión de Groq
+// (qwen3.x) tienen una cuota gratuita de salida muy pequeña (~1000 tokens/min),
+// así que en vez de pedirles la historia JSON completa (miles de tokens),
+// les pedimos solo una descripción corta en texto plano del personaje. Esa
+// descripción luego se le pasa al modelo de TEXTO (mucho más generoso en su
+// cuota gratuita) para que escriba la historia completa.
+async function analyzeReferenceImages(images: string[]): Promise<string> {
+  const content: GroqContentPart[] = [
+    {
+      type: "text",
+      text: `Analiza el/los personaje(s) en la(s) imagen(es) de referencia adjunta(s) y escribe una descripción visual CONCISA en texto plano (máximo 100 palabras): complexión física, cabello, rasgos si son visibles, ropa, colores, y si el estilo es de energía brillante/holográfico/neón, el color y tipo de brillo. Esta descripción la usará después OTRA IA que NO puede ver imágenes, para mantener al personaje visualmente consistente en muchas ilustraciones. NO uses JSON, NO uses markdown, solo texto plano descriptivo.`
+    },
+    ...images.slice(0, 5).map(img => ({ type: "image_url" as const, image_url: { url: img } }))
+  ];
+  const messages: GroqChatMessage[] = [
+    { role: "system", content: "Eres un analista visual. Describes personajes en imágenes de forma concisa y precisa, en texto plano, nunca en JSON." },
+    { role: "user", content }
+  ];
+  try {
+    const result = await callGroq(messages, "qwen/qwen3.6-27b", { maxTokens: 400, jsonMode: false });
+    return result.trim();
+  } catch (err) {
+    console.warn("[Groq] Falló el análisis de imagen con qwen3.6-27b, probando qwen3.8-27b...", err);
+    const result = await callGroq(messages, "qwen/qwen3.8-27b", { maxTokens: 400, jsonMode: false });
+    return result.trim();
+  }
 }
 
 // Groq (a diferencia de Gemini) no fuerza un schema estricto, solo JSON válido.
@@ -1327,6 +1362,20 @@ export default function App() {
     }
   });
 
+  // Las imágenes de referencia ya no se sincronizan con Firestore (ver nota
+  // más abajo, en el guardado de ajustes) — se guardan solo en este navegador.
+  useEffect(() => {
+    try {
+      if (visualAnchorImages.length > 0) {
+        localStorage.setItem('app_visual_anchor_images', JSON.stringify(visualAnchorImages));
+      } else {
+        localStorage.removeItem('app_visual_anchor_images');
+      }
+    } catch (e) {
+      console.warn('No se pudieron guardar las imágenes de referencia en localStorage (puede que sean muy pesadas para el almacenamiento local del navegador).', e);
+    }
+  }, [visualAnchorImages]);
+
   // --- Settings Sync with Firestore ---
   useEffect(() => {
     if (!user) {
@@ -1423,7 +1472,11 @@ export default function App() {
         totalCost,
         costBreakdown,
         visualAnchor,
-        visualAnchorImages,
+        // NOTA: visualAnchorImages (imágenes en base64) se excluye a propósito.
+        // Firestore tiene un límite duro de 1MB por documento — unas pocas
+        // imágenes de referencia ya lo superan y hacían fallar TODO el guardado
+        // de ajustes (incluido currentStoryId). Ahora solo vive en localStorage
+        // de este navegador (ver el useEffect de sincronización más abajo).
         manualApiKey,
         isAuthorized,
         apiKeySelected,
@@ -1441,7 +1494,7 @@ export default function App() {
     dynamicAngles, useExactText, storyDuration, modelQuality, selectedVoice,
     imageProvider, videoProvider, burnTextIntoImages, subtitleStyle,
     subtitlePosition, consistencyLevel, savedCharacters, totalCost,
-    costBreakdown, visualAnchor, visualAnchorImages, manualApiKey,
+    costBreakdown, visualAnchor, manualApiKey,
     isAuthorized, apiKeySelected, sidebarTab
   ]);
 
@@ -2170,13 +2223,31 @@ const COSTS = {
         : "";
 
       // Groq - motor de texto/visión para historias y prompts
+      // Si hay imágenes de referencia, primero las analizamos con una llamada
+      // CORTA y aparte (ver analyzeReferenceImages) para no chocar con el
+      // límite de salida tan pequeño que tienen los modelos de visión en la
+      // capa gratuita. Si el análisis falla por completo, seguimos igual,
+      // solo que sin esa descripción real (el modelo tendrá que inventar).
+      let characterDescriptionFromImages: string | null = null;
+      if (visualAnchorImages.length > 0) {
+        try {
+          characterDescriptionFromImages = await analyzeReferenceImages(visualAnchorImages);
+        } catch (err) {
+          console.warn("[Groq] No se pudo analizar las imágenes de referencia (ambos modelos de visión fallaron):", err);
+        }
+      }
+
       const visualAnchorNote = visualAnchorImages.length > 0
-        ? (activeStyle === "HOLOGRAPHIC SOUL"
-            ? `REFERENCIAS VISUALES ADJUNTAS: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia del/de los personaje(s). Analízalas para identificar cuántos personajes distintos hay y su silueta/pose general, pero NO describas sus rasgos físicos concretos en el texto (ver regla de oro de Holographic Soul más abajo) — solo refiérete a ellos como "the ethereal holographic figure from the reference image".`
-            : `REFERENCIAS VISUALES ADJUNTAS: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia de personaje/estilo en este mensaje. ANALIZA CUIDADOSAMENTE cada imagen (rasgos faciales, color y estilo de pelo, tono de piel o color de energía si es un estilo holográfico/neón, vestimenta, calzado, complexión corporal) y describe ese MISMO personaje de forma EXTREMADAMENTE DETALLADA y CONSISTENTE en el campo 'imagePrompt' de TODOS los segmentos. NO inventes un personaje distinto al de las imágenes. NO contradigas lo que ves en las imágenes.`)
+        ? (characterDescriptionFromImages
+            ? (activeStyle === "HOLOGRAPHIC SOUL"
+                ? `REFERENCIA DE PERSONAJE (obtenida analizando la(s) imagen(es) que subió el usuario): ${characterDescriptionFromImages}\n\nA pesar de tener esta referencia, recuerda la regla de oro de Holographic Soul: en el 'imagePrompt' NO describas estos rasgos físicos de forma fija — solo úsalos internamente para saber cuántos personajes hay y su silueta general, y en el texto refiérete a ellos como "the ethereal holographic figure from the reference image".`
+                : `REFERENCIA DE PERSONAJE (obtenida analizando la(s) imagen(es) que subió el usuario): ${characterDescriptionFromImages}\n\nUsa ESTA descripción de forma EXTREMADAMENTE DETALLADA y CONSISTENTE en el campo 'imagePrompt' de TODOS los segmentos. NO inventes un personaje distinto a esta descripción. NO la contradigas.`)
+            : (activeStyle === "HOLOGRAPHIC SOUL"
+                ? `NOTA: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia, pero no se pudieron analizar en este intento. Sigue igualmente la regla de oro de Holographic Soul: NO describas rasgos físicos fijos, refiérete al personaje como "the ethereal holographic figure from the reference image".`
+                : `NOTA: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia de personaje, pero no se pudieron analizar en este intento. Inventa una descripción física ÚNICA, DETALLADA y CONSISTENTE del personaje (color de pelo, rasgos, estilo) y mantenla IDÉNTICA en todos los segmentos.`))
         : "";
 
-      const generateWithModel = async (modelName: string, useImages: boolean = visualAnchorImages.length > 0) => {
+      const generateWithModel = async (modelName: string) => {
         const directScriptInstruction = activePrompt.includes("NARRACIÓN") || activePrompt.includes("HOOK") 
           ? `¡ESTADO CRÍTICO! El usuario ha proporcionado un GUIÓN TEXTUAL COMPLETO. TU ÚNICA TAREA ES EXTRAER ESE TEXTO Y DIVIDIRLO EN SEGMENTOS. **ESTÁ TOTALMENTE PROHIBIDO ALTERAR, CAMBIAR, AÑADIR O QUITAR PALABRAS Y DESENLACES A LA HISTORIA.** Respeta el texto EXACTO. Asigna una voz diferente si un segmento es diálogo de otro personaje.` : ``;
 
@@ -2242,51 +2313,24 @@ const COSTS = {
             ]
           }`;
 
-        // Solo usamos el formato de "content" en arreglo (partes de texto/imagen)
-        // cuando realmente hay imágenes que mandar — el modelo de texto puro
-        // (gpt-oss-120b) rechaza ese formato con un 400 si le llega un arreglo,
-        // aunque solo tenga una parte de texto. Con imágenes sí es necesario
-        // porque así es como el modelo de visión (qwen) recibe cada imagen.
-        const userContent: string | GroqContentPart[] = useImages && visualAnchorImages.length > 0
-          ? [
-              { type: "text", text: textPrompt },
-              // qwen3.6-27b admite hasta 5 imágenes por request
-              ...visualAnchorImages.slice(0, 5).map(img => ({ type: "image_url" as const, image_url: { url: img } }))
-            ]
-          : textPrompt;
-
+        // El texto principal SIEMPRE se manda como string simple — las
+        // imágenes ya no viajan en esta llamada (ver analyzeReferenceImages
+        // más arriba en generateStory, que ya extrajo una descripción de
+        // texto de las imágenes antes de llegar aquí).
         const groqResponse = await withRetry(() => callGroq([
           { role: "system", content: "Eres un guionista y director de arte experto en contenido viral para redes sociales. SIEMPRE respondes con JSON válido y nada más, sin explicaciones ni markdown." },
-          { role: "user", content: userContent }
+          { role: "user", content: textPrompt }
         ], modelName));
 
         return groqResponse;
       };
 
-      const hasReferenceImages = visualAnchorImages.length > 0;
       let rawText: string;
       try {
-        rawText = await generateWithModel(hasReferenceImages ? "qwen/qwen3.6-27b" : "openai/gpt-oss-120b");
+        rawText = await generateWithModel("openai/gpt-oss-120b");
       } catch (err: any) {
-        console.warn(`[Groq] Falló el modelo principal (${hasReferenceImages ? "qwen/qwen3.6-27b" : "openai/gpt-oss-120b"}):`, err?.message || err);
-        try {
-          rawText = await generateWithModel(hasReferenceImages ? "qwen/qwen3.8-27b" : "openai/gpt-oss-20b");
-        } catch (err2: any) {
-          console.warn(`[Groq] Falló el modelo de respaldo (${hasReferenceImages ? "qwen/qwen3.8-27b" : "openai/gpt-oss-20b"}):`, err2?.message || err2);
-          if (hasReferenceImages) {
-            // Último recurso: seguir sin imágenes en vez de fallar del todo.
-            console.warn("[Groq] Fallaron ambos modelos de visión, generando sin analizar las imágenes...");
-            try {
-              rawText = await generateWithModel("openai/gpt-oss-120b", false);
-            } catch (err3: any) {
-              console.error("[Groq] También falló el último recurso (sin imágenes):", err3?.message || err3);
-              // Mostramos el error del PRIMER intento, que suele ser el diagnóstico real.
-              throw err;
-            }
-          } else {
-            throw err2;
-          }
-        }
+        console.warn(`[Groq] Falló el modelo principal (openai/gpt-oss-120b):`, err?.message || err);
+        rawText = await generateWithModel("openai/gpt-oss-20b");
       }
 
       if (!rawText) {
