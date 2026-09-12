@@ -2173,7 +2173,7 @@ const COSTS = {
             : `REFERENCIAS VISUALES ADJUNTAS: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia de personaje/estilo en este mensaje. ANALIZA CUIDADOSAMENTE cada imagen (rasgos faciales, color y estilo de pelo, tono de piel o color de energía si es un estilo holográfico/neón, vestimenta, calzado, complexión corporal) y describe ese MISMO personaje de forma EXTREMADAMENTE DETALLADA y CONSISTENTE en el campo 'imagePrompt' de TODOS los segmentos. NO inventes un personaje distinto al de las imágenes. NO contradigas lo que ves en las imágenes.`)
         : "";
 
-      const generateWithModel = async (modelName: string) => {
+      const generateWithModel = async (modelName: string, useImages: boolean = visualAnchorImages.length > 0) => {
         const directScriptInstruction = activePrompt.includes("NARRACIÓN") || activePrompt.includes("HOOK") 
           ? `¡ESTADO CRÍTICO! El usuario ha proporcionado un GUIÓN TEXTUAL COMPLETO. TU ÚNICA TAREA ES EXTRAER ESE TEXTO Y DIVIDIRLO EN SEGMENTOS. **ESTÁ TOTALMENTE PROHIBIDO ALTERAR, CAMBIAR, AÑADIR O QUITAR PALABRAS Y DESENLACES A LA HISTORIA.** Respeta el texto EXACTO. Asigna una voz diferente si un segmento es diálogo de otro personaje.` : ``;
 
@@ -2244,7 +2244,7 @@ const COSTS = {
         // (gpt-oss-120b) rechaza ese formato con un 400 si le llega un arreglo,
         // aunque solo tenga una parte de texto. Con imágenes sí es necesario
         // porque así es como el modelo de visión (qwen) recibe cada imagen.
-        const userContent: string | GroqContentPart[] = visualAnchorImages.length > 0
+        const userContent: string | GroqContentPart[] = useImages && visualAnchorImages.length > 0
           ? [
               { type: "text", text: textPrompt },
               // qwen3.6-27b admite hasta 5 imágenes por request
@@ -2265,14 +2265,21 @@ const COSTS = {
       try {
         rawText = await generateWithModel(hasReferenceImages ? "qwen/qwen3.6-27b" : "openai/gpt-oss-120b");
       } catch (err: any) {
-        console.warn(`Fallo con el modelo principal, probando respaldo...`, err);
+        console.warn(`[Groq] Falló el modelo principal (${hasReferenceImages ? "qwen/qwen3.6-27b" : "openai/gpt-oss-120b"}):`, err?.message || err);
         try {
           rawText = await generateWithModel(hasReferenceImages ? "qwen/qwen3.8-27b" : "openai/gpt-oss-20b");
         } catch (err2: any) {
+          console.warn(`[Groq] Falló el modelo de respaldo (${hasReferenceImages ? "qwen/qwen3.8-27b" : "openai/gpt-oss-20b"}):`, err2?.message || err2);
           if (hasReferenceImages) {
             // Último recurso: seguir sin imágenes en vez de fallar del todo.
-            console.warn("Fallaron ambos modelos de visión, generando sin analizar las imágenes...", err2);
-            rawText = await generateWithModel("openai/gpt-oss-120b");
+            console.warn("[Groq] Fallaron ambos modelos de visión, generando sin analizar las imágenes...");
+            try {
+              rawText = await generateWithModel("openai/gpt-oss-120b", false);
+            } catch (err3: any) {
+              console.error("[Groq] También falló el último recurso (sin imágenes):", err3?.message || err3);
+              // Mostramos el error del PRIMER intento, que suele ser el diagnóstico real.
+              throw err;
+            }
           } else {
             throw err2;
           }
