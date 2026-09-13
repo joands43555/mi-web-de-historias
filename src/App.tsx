@@ -392,6 +392,39 @@ function parseGroqJson(rawText: string): any {
   }
 }
 
+// --- Modo "Texto Exacto": dividir el texto del usuario en segmentos SIN
+// pasar por el modelo (0% riesgo de que la IA corrompa/reescriba palabras).
+// El modelo solo se usa después para las descripciones visuales de cada
+// parte ya dividida, nunca para "retipear" el texto.
+function splitExactTextIntoSentences(text: string): string[] {
+  const matches = text.match(/[^.!?…]+[.!?…]+(["'”’)\]]*)?|[^.!?…]+$/g);
+  if (!matches) return [text.trim()].filter(Boolean);
+  return matches.map(s => s.trim()).filter(Boolean);
+}
+
+function splitExactTextIntoSegments(text: string, minWords = 10, maxWords = 20): string[] {
+  const sentences = splitExactTextIntoSentences(text);
+  const segments: string[] = [];
+  let current = '';
+  let currentWordCount = 0;
+
+  for (const sentence of sentences) {
+    const normalized = sentence.replace(/\s+/g, ' ').trim();
+    const wordCount = normalized.split(' ').filter(Boolean).length;
+
+    if (current && (currentWordCount + wordCount) > maxWords && currentWordCount >= minWords) {
+      segments.push(current.trim());
+      current = normalized;
+      currentWordCount = wordCount;
+    } else {
+      current = current ? `${current} ${normalized}` : normalized;
+      currentWordCount += wordCount;
+    }
+  }
+  if (current.trim()) segments.push(current.trim());
+  return segments.length > 0 ? segments : [text.trim()];
+}
+
 // --- Types ---
 
 interface StorySegment {
@@ -2187,6 +2220,26 @@ const COSTS = {
       const segmentsToGenerate = Math.min(numericSegmentCounts[storyDuration] || 10, 50); // Aumentado el límite a 50 para mayor flexibilidad
       const promptType = type === 'quote' ? "FRASES RÁPIDAS / QUOTES" : "HISTORIA NARRATIVA";
       
+      // Modo "Texto Exacto": dividimos el texto del usuario en JavaScript,
+      // no con el modelo — así el texto final es BYTE POR BYTE el mismo que
+      // pegó el usuario, sin riesgo de que la IA lo altere/corrompa al
+      // "retipearlo". El modelo, más abajo, solo describe visualmente cada
+      // parte ya dividida.
+      const exactTextSegments = (useExactText && type !== 'quote')
+        ? splitExactTextIntoSegments(activePrompt)
+        : null;
+
+      const exactSegmentsListText = exactTextSegments
+        ? exactTextSegments.map((s, i) => `${i + 1}. ${s}`).join('\n')
+        : '';
+
+      const exactModeInstruction = exactTextSegments
+        ? `MODO TEXTO EXACTO (PRIORITARIO, IGNORA CUALQUIER INSTRUCCIÓN DE DURACIÓN/CANTIDAD DE SEGMENTOS DE ABAJO): El texto del usuario YA fue dividido en EXACTAMENTE ${exactTextSegments.length} partes numeradas (ver lista más abajo). Debes generar EXACTAMENTE ${exactTextSegments.length} objetos dentro de "segments", en el MISMO ORDEN — ni uno más, ni uno menos. NO fusiones partes, NO dividas ninguna parte en dos. Para cada parte, genera SOLO su descripción visual (imagePrompt, videoDescription, cameraAngle, characterVoice opcional) — NO incluyas el campo "text", el texto exacto ya lo tenemos nosotros y no debes repetirlo ni reescribirlo.
+
+           PARTES NUMERADAS (solo como CONTEXTO para saber qué describir visualmente en cada segmento — NO las copies en tu respuesta):
+           ${exactSegmentsListText}`
+        : '';
+
       const durationInstruction = storyDuration === "Auto" 
         ? `Cubre TODA la historia en detalle, sin omitir partes importantes. Decide tú mismo cuánto debe durar la narración según lo que el tema realmente necesite para completarse bien (normalmente entre 1 y 3 minutos para contenido de redes sociales, salvo que el tema pida claramente más). 
            CÁLCULO DE SEGMENTOS (OBLIGATORIO): Una vez decidida la duración de la narración, DIVÍDELA en aproximadamente 10 a 11 segmentos POR CADA MINUTO de narración (ejemplos: ~1:40 min → entre 15 y 18 segmentos; ~1:00 min → 10-12 segmentos; ~2:00 min → 20-22 segmentos). Cada segmento debe cubrir una escena o "beat" narrativo completo (aprox 12-18 palabras) — ESTÁ PROHIBIDO fragmentar una sola escena o emoción en varios segmentos casi idénticos solo para sumar más cantidad. NUNCA generes más de 22 segmentos en modo automático salvo que el tema sea excepcionalmente extenso y realmente lo amerite.`
@@ -2248,7 +2301,7 @@ const COSTS = {
         : "";
 
       const generateWithModel = async (modelName: string) => {
-        const directScriptInstruction = activePrompt.includes("NARRACIÓN") || activePrompt.includes("HOOK") 
+        const directScriptInstruction = (!exactTextSegments && (activePrompt.includes("NARRACIÓN") || activePrompt.includes("HOOK")))
           ? `¡ESTADO CRÍTICO! El usuario ha proporcionado un GUIÓN TEXTUAL COMPLETO. TU ÚNICA TAREA ES EXTRAER ESE TEXTO Y DIVIDIRLO EN SEGMENTOS. **ESTÁ TOTALMENTE PROHIBIDO ALTERAR, CAMBIAR, AÑADIR O QUITAR PALABRAS Y DESENLACES A LA HISTORIA.** Respeta el texto EXACTO. Asigna una voz diferente si un segmento es diálogo de otro personaje.` : ``;
 
         const voiceInstruction = `
@@ -2259,7 +2312,7 @@ const COSTS = {
         `;
 
         const textPrompt = `Crea un contenido de ${promptType} de CALIDAD CINEMATOGRÁFICA SUPREMA basado en: "${activePrompt}". 
-          ${durationInstruction}
+          ${exactTextSegments ? exactModeInstruction : durationInstruction}
           ${characterIdentificationInstruction}
           ${neonBlueprintInstruction}
           ${holographicSoulInstruction}
@@ -2271,8 +2324,8 @@ const COSTS = {
           // Configuración básica de prompts
           ${type === 'quote'
             ? "Cada segmento debe ser una frase corta y potente de máximo 20 palabras."
-            : useExactText 
-              ? `TEXTO INTACTO OBLIGATORIO: Está TOTALMENTE PROHIBIDO modificar la historia, guión o resumen proporcionado por el usuario. No puedes agregar palabras, no puedes omitir partes, ni reescribir con tus palabras. Tienes que DIVIDIR literalmente el texto exacto proporcionado en segmentos cortos. Debes devolver la narración exactamente igual que la recibiste en el campo 'narration' del JSON de salida.` 
+            : exactTextSegments
+              ? `Genera EXACTAMENTE ${exactTextSegments.length} objetos en "segments", en el mismo orden que las partes numeradas de arriba. NO incluyas el campo "text".`
               : isReflectionMode ? "Cada segmento debe ser una reflexión profunda de máximo 20 palabras." : "Crea una narrativa rica dividida en segmentos cortos de máximo 20 palabras. IMPORTANTE: Para cumplir con la duración, debes crear entre 10 y 11 segmentos por cada minuto de narración."}
           Para cada segmento, proporciona el texto, una descripción visual detallada (EN ESPAÑOL), un ángulo de cámara y una DESCRIPCIÓN DE MOVIMIENTO Y ESCENA (EN ESPAÑOL).
           
@@ -2304,7 +2357,7 @@ const COSTS = {
             "hashtags": string[],
             "segments": [
               {
-                "text": string,
+                ${exactTextSegments ? '// NO incluyas "text" aquí, ya tenemos el texto exacto de cada parte.' : '"text": string,'}
                 "imagePrompt": string, // EN INGLÉS, MÍNIMO 150 PALABRAS, extremadamente detallado (iluminación, atmósfera, cámara). Mantén al personaje consistente.
                 "videoDescription": string, // EN ESPAÑOL, describe movimiento y vestimenta, termina siempre con "No poner música ni audio de voz."
                 "cameraAngle": string,
@@ -2364,13 +2417,26 @@ const COSTS = {
       }
 
       addCost(COSTS.STORY_GEN, 'stories');
-      const formattedSegments = rawSegments.map((s: any, i: number) => ({
+
+      // Modo Texto Exacto: reconciliamos los objetos visuales que devolvió
+      // el modelo con nuestros segmentos de texto ya divididos (que son la
+      // ÚNICA fuente de verdad del texto — nunca confiamos en lo que el
+      // modelo haya podido reescribir).
+      let alignedRawSegments = rawSegments;
+      if (exactTextSegments) {
+        if (rawSegments.length !== exactTextSegments.length) {
+          console.warn(`[Texto Exacto] El modelo devolvió ${rawSegments.length} descripciones visuales pero había ${exactTextSegments.length} partes de texto. Se ajusta automáticamente.`);
+        }
+        alignedRawSegments = exactTextSegments.map((_, i) => rawSegments[i] || rawSegments[rawSegments.length - 1] || {});
+      }
+
+      const formattedSegments = alignedRawSegments.map((s: any, i: number) => ({
         ...s,
-        text: s.text || `Segmento ${i + 1} de la historia.`,
+        text: exactTextSegments ? exactTextSegments[i] : (s.text || `Segmento ${i + 1} de la historia.`),
         id: `seg-${i}-${Date.now()}`
       }));
       
-      const fullNarration = data.narration || formattedSegments.map((s: any) => s.text).join(' ');
+      const fullNarration = exactTextSegments ? activePrompt.trim() : (data.narration || formattedSegments.map((s: any) => s.text).join(' '));
 
       const newStory: Story = { 
         id: `story-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
