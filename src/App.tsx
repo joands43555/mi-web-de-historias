@@ -5100,7 +5100,12 @@ const COSTS = {
                                 setError(null);
                                 
                                 try {
-                                  const apiKey = getApiKey()!;
+                                  const apiKey = getApiKey();
+                                  if (!apiKey) {
+                                    setError("Para analizar videos necesitas configurar tu API Key de Google AI Studio (gratis) en Ajustes. Es la misma que usas para generar imágenes con 'Google AI (Flash)'.");
+                                    setIsAnalyzingVideo(false);
+                                    return;
+                                  }
                                   const ai = new GoogleGenAI({ apiKey });
                                   
                                   const reader = new FileReader();
@@ -5110,7 +5115,7 @@ const COSTS = {
                                       const base64 = (reader.result as string).split(',')[1];
                                       
                                       const response = await ai.models.generateContent({
-                                        model: "gemini-3.1-pro-preview",
+                                        model: "gemini-3-flash-preview",
                                         contents: [
                                           {
                                             inlineData: {
