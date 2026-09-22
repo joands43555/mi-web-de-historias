@@ -4658,133 +4658,6 @@ const COSTS = {
     );
   }
 
-  if (!apiKeySelected) {
-    if (showApiKeyInput) {
-      return (
-        <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center p-6">
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="max-w-md w-full bg-zinc-900 border border-zinc-800 p-8 rounded-3xl space-y-6 shadow-2xl">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-emerald-500/20 rounded-xl flex items-center justify-center border border-emerald-500/30">
-                <Key className="w-5 h-5 text-emerald-400" />
-              </div>
-              <h2 className="text-xl font-bold">Configurar API Key</h2>
-            </div>
-            <p className="text-zinc-400 text-sm">
-              Ingresa tu clave API de Gemini aquí. Se guardará localmente en tu navegador.
-            </p>
-            <form onSubmit={handleManualApiKeySave} className="space-y-4">
-              <input
-                type="password"
-                value={manualApiKey}
-                onChange={(e) => setManualApiKey(e.target.value)}
-                placeholder="AIzaSy..."
-                className="w-full bg-black border border-zinc-800 rounded-xl p-4 text-sm focus:ring-2 focus:ring-emerald-500/50 outline-none transition-all font-mono"
-              />
-              <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-black border border-zinc-800 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <TypeIcon className="w-4 h-4 text-emerald-400" />
-                  <div className="text-left">
-                    <div className="text-xs font-bold text-white">Grabar frases en imágenes</div>
-                    <div className="text-[9px] text-zinc-500">Inserta el texto automáticamente en cada escena</div>
-                  </div>
-                </div>
-                <button 
-                  type="button"
-                  onClick={() => {
-                    const newVal = !burnTextIntoImages;
-                    setBurnTextIntoImages(newVal);
-                    localStorage.setItem('app_burn_text', String(newVal));
-                  }}
-                  className={cn(
-                    "w-10 h-5 rounded-full transition-all relative shrink-0",
-                    burnTextIntoImages ? "bg-emerald-500" : "bg-zinc-800"
-                  )}
-                >
-                  <div className={cn(
-                    "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
-                    burnTextIntoImages ? "right-1" : "left-1"
-                  )} />
-                </button>
-              </div>
-              </div>
-              <div className="flex gap-3">
-                <button 
-                  type="button"
-                  onClick={() => setShowApiKeyInput(false)}
-                  className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-xl transition-all"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  type="submit"
-                  className="flex-[2] py-3 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded-xl transition-all shadow-lg shadow-emerald-500/20"
-                >
-                  Guardar Clave
-                </button>
-              </div>
-            </form>
-          </motion.div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center p-6 text-center">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-md space-y-8">
-          <div className="w-20 h-20 bg-emerald-500/20 rounded-3xl flex items-center justify-center mx-auto border border-emerald-500/30">
-            <Sparkles className="w-10 h-10 text-emerald-400" />
-          </div>
-          <div className="space-y-4">
-            <h1 className="text-4xl font-bold tracking-tight">Visualizador de Historias IA</h1>
-            <p className="text-zinc-400 leading-relaxed">
-              Para usar la generación de imágenes y videos de alta calidad de forma gratuita, obtén tu propia API Key en Google AI Studio.
-            </p>
-          </div>
-          <div className="space-y-3">
-            <a 
-              href="https://aistudio.google.com/app/apikey" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded-xl transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
-            >
-              <ExternalLink className="w-5 h-5" />
-              Obtener API Key Gratis (AI Studio)
-            </a>
-            <button 
-              onClick={() => setShowApiKeyInput(true)} 
-              className="w-full py-3 bg-zinc-900/50 hover:bg-zinc-800 text-zinc-300 text-sm font-medium rounded-xl border border-zinc-800 transition-all flex items-center justify-center gap-2"
-            >
-              <Key className="w-4 h-4" />
-              Ingresar Clave Manualmente
-            </button>
-            <button 
-              onClick={() => setApiKeySelected(true)} 
-              className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-sm font-medium rounded-xl transition-all"
-            >
-              Omitir por ahora (Funciones limitadas)
-            </button>
-            {!getApiKey() && (
-              <p className="text-[10px] text-red-500/50 mt-1">
-                Nota: No se detectó clave gratuita. Configúrala en 'Secrets' o ingrésala manualmente.
-              </p>
-            )}
-          </div>
-          <p className="text-xs text-zinc-500">
-            Requiere un proyecto de Google Cloud con facturación habilitada. 
-          </p>
-          <div className="pt-4 text-[10px] text-zinc-700 uppercase tracking-widest flex flex-col gap-1">
-            <div>Estado: {detectedKey ? `Clave Detectada (${getApiKeySource()})` : "Esperando Clave..."}</div>
-            {!detectedKey && (
-              <div className="text-[8px] text-zinc-800 font-mono">
-                D: {String(!!getVal(window, 'process.env.API_KEY'))}|{String(!!getVal(window, 'API_KEY'))}|{String(!!getVal(window, 'process.env.GEMINI_API_KEY'))}|{String(!!getVal(window, 'GEMINI_API_KEY'))}
-              </div>
-            )}
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-emerald-500/30">
@@ -4941,9 +4814,6 @@ const COSTS = {
               Nuevo Proyecto
             </button>
             <div className="w-px h-4 bg-zinc-800 mx-2" />
-            <button onClick={() => setApiKeySelected(false)} className="p-2 hover:bg-zinc-800 rounded-full transition-colors">
-              <Settings className="w-5 h-5 text-zinc-400" />
-            </button>
           </div>
         </div>
       </header>
@@ -5826,17 +5696,9 @@ const COSTS = {
                 <p>{error}</p>
               </div>
               <div className="pt-2 border-t border-red-500/20 flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-red-500/60 uppercase font-bold tracking-widest">
-                    Estado de API: {detectedKey ? "Clave Detectada (" + getApiKeySource() + ")" : "Ninguna Clave Detectada"}
-                  </span>
-                  <button 
-                    onClick={() => setApiKeySelected(false)}
-                    className="text-[10px] font-bold text-red-400 hover:text-red-300 underline underline-offset-2"
-                  >
-                    Reconfigurar Clave
-                  </button>
-                </div>
+                <span className="text-[10px] text-red-500/60 uppercase font-bold tracking-widest">
+                  Estado de API: {detectedKey ? "Clave Detectada (" + getApiKeySource() + ")" : "Ninguna Clave Detectada"}
+                </span>
                 {!detectedKey && (
                   <div className="text-[9px] text-red-500/40 font-mono break-all">
                     D: W.P.E.A: {String(!!getVal(window, 'process.env.API_KEY'))}, 
