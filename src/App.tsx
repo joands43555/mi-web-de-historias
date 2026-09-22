@@ -1116,6 +1116,7 @@ export default function App() {
   const [appMode, setAppMode] = useState<AppMode>("create");
   const [sidebarTab, setSidebarTab] = useState<'narrative' | 'quote' | 'analyze'>(() => (localStorage.getItem('app_sidebar_tab') as any) || 'narrative');
   const [analysisResult, setAnalysisResult] = useState<{
+    script: string;
     summary: string;
     style: string;
     tone: string;
@@ -4994,7 +4995,7 @@ const COSTS = {
                                             }
                                           },
                                           {
-                                            text: "Analiza este video detalladamente. Extrae: 1. Un resumen de la historia/acción. 2. El estilo visual exacto (colores, iluminación, técnica). 3. El tono narrativo (sensual, épico, melancólico, etc.). 4. Un prompt maestro que pueda usar para recrear este estilo y narrativa. Devuelve el resultado en formato JSON con los campos: 'summary', 'style', 'tone', 'prompt'."
+                                            text: "Analiza este video EN DETALLE, cubriendo TODO su contenido de principio a fin (no resumas de más, el video completo dura aproximadamente lo que dura el archivo). Extrae: 1. Un GUION NARRATIVO DETALLADO que reconstruya TODO lo que se dice/muestra en el video — cada afirmación, dato o punto de la historia, en el mismo orden y con un largo proporcional a la duración real del video (si el video dura 1 minuto, el guion debe tener aproximadamente 130-160 palabras, no una sola oración). 2. Un resumen corto de una sola oración (para referencia rápida). 3. El estilo visual exacto (colores, iluminación, técnica, composición). 4. El tono narrativo (sensual, épico, melancólico, educativo, etc.). 5. Un prompt maestro en inglés que describa visualmente el estilo para recrearlo. Devuelve el resultado en formato JSON con los campos: 'script' (el guion narrativo detallado), 'summary' (la oración corta), 'style', 'tone', 'prompt'."
                                           }
                                         ],
                                         config: {
@@ -5002,12 +5003,13 @@ const COSTS = {
                                           responseSchema: {
                                             type: Type.OBJECT,
                                             properties: {
+                                              script: { type: Type.STRING },
                                               summary: { type: Type.STRING },
                                               style: { type: Type.STRING },
                                               tone: { type: Type.STRING },
                                               prompt: { type: Type.STRING }
                                             },
-                                            required: ["summary", "style", "tone", "prompt"]
+                                            required: ["script", "summary", "style", "tone", "prompt"]
                                           }
                                         }
                                       });
@@ -5049,6 +5051,10 @@ const COSTS = {
                             className="p-4 bg-zinc-900 border border-zinc-800 rounded-2xl space-y-4"
                           >
                             <div className="space-y-1">
+                              <label className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Guion Reconstruido</label>
+                              <p className="text-[11px] text-zinc-300 bg-black/40 p-2 rounded-lg border border-zinc-800 max-h-32 overflow-y-auto">{analysisResult.script}</p>
+                            </div>
+                            <div className="space-y-1">
                               <label className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Estilo Detectado</label>
                               <p className="text-[11px] text-white font-bold">{analysisResult.style}</p>
                             </div>
@@ -5075,8 +5081,8 @@ const COSTS = {
                             </div>
                             <button 
                               onClick={() => {
-                                setPrompt(analysisResult.summary);
-                                setVisualStyle("Comic Realista Moderno");
+                                setPrompt(analysisResult.script);
+                                setUseExactText(true);
                                 setSidebarTab('narrative');
                               }}
                               className="w-full py-2 bg-blue-500 hover:bg-blue-400 text-black font-black text-[10px] uppercase tracking-widest rounded-xl transition-all"
