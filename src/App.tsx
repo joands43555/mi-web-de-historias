@@ -4985,7 +4985,7 @@ const COSTS = {
                                     try {
                                       const base64 = (reader.result as string).split(',')[1];
                                       
-                                      const response = await ai.models.generateContent({
+                                      const response = await withRetry(() => ai.models.generateContent({
                                         model: "gemini-3-flash-preview",
                                         contents: [
                                           {
@@ -5012,7 +5012,7 @@ const COSTS = {
                                             required: ["script", "summary", "style", "tone", "prompt"]
                                           }
                                         }
-                                      });
+                                      }));
                                       
                                       const result = JSON.parse(response.text);
                                       setAnalysisResult(result);
