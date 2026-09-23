@@ -2398,8 +2398,18 @@ const COSTS = {
       try {
         rawText = await generateWithModel("openai/gpt-oss-120b");
       } catch (err: any) {
-        console.warn(`[Groq] Falló el modelo principal (openai/gpt-oss-120b):`, err?.message || err);
-        rawText = await generateWithModel("openai/gpt-oss-20b");
+        console.warn(`[Groq] Falló el modelo principal (intento 1):`, err?.message || err);
+        try {
+          // "Failed to generate JSON" suele ser un tropiezo puntual del
+          // muestreo del modelo con prompts largos/complejos, no una
+          // limitación real — reintentamos con el MISMO modelo (más
+          // confiable siguiendo las instrucciones de cantidad de segmentos)
+          // antes de bajar a uno más débil.
+          rawText = await generateWithModel("openai/gpt-oss-120b");
+        } catch (err2: any) {
+          console.warn(`[Groq] Falló el modelo principal (intento 2), bajando a gpt-oss-20b:`, err2?.message || err2);
+          rawText = await generateWithModel("openai/gpt-oss-20b");
+        }
       }
 
       if (!rawText) {
