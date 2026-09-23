@@ -1239,6 +1239,18 @@ export default function App() {
       return [];
     }
   });
+
+  // Los personajes guardados incluyen imageUrl en base64 (igual que las
+  // imágenes de referencia) — nunca a Firestore (rompe el límite de tamaño
+  // del documento), solo a este navegador. Antes se leía de localStorage
+  // pero nunca se escribía de vuelta ahí.
+  useEffect(() => {
+    try {
+      localStorage.setItem('app_saved_characters', JSON.stringify(savedCharacters));
+    } catch (e) {
+      console.warn('No se pudieron guardar los personajes en localStorage (puede que las imágenes sean muy pesadas).', e);
+    }
+  }, [savedCharacters]);
   const [story, setStoryState] = useState<Story | null>(null);
   const storyRef = React.useRef<Story | null>(null);
   const saveContextRef = React.useRef<{ user: FirebaseUser | null; currentStoryId: string | null }>({ user: null, currentStoryId: null });
@@ -1502,7 +1514,10 @@ export default function App() {
         subtitleStyle,
         subtitlePosition,
         consistencyLevel,
-        savedCharacters,
+        // NOTA: savedCharacters se excluye igual que visualAnchorImages —
+        // cada personaje guardado incluye su imageUrl en base64, que rompe
+        // el límite de tamaño del documento de Firestore. Solo vive en
+        // localStorage de este navegador (ver useEffect junto a su useState).
         totalCost,
         costBreakdown,
         visualAnchor,
