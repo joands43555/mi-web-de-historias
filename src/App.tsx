@@ -364,14 +364,12 @@ async function analyzeReferenceImages(images: string[]): Promise<string> {
     { role: "system", content: "Eres un analista visual. Describes personajes en imágenes de forma concisa y precisa, en texto plano, nunca en JSON." },
     { role: "user", content }
   ];
-  try {
-    const result = await callGroq(messages, "qwen/qwen3.6-27b", { maxTokens: 400, jsonMode: false });
-    return result.trim();
-  } catch (err) {
-    console.warn("[Groq] Falló el análisis de imagen con qwen3.6-27b, probando qwen3.8-27b...", err);
-    const result = await callGroq(messages, "qwen/qwen3.8-27b", { maxTokens: 400, jsonMode: false });
-    return result.trim();
-  }
+  // qwen/qwen3.6-27b fue retirado por Groq (14 sept 2026). qwen3.8-27b es
+  // ahora el ÚNICO modelo de visión disponible — se llama directo, sin
+  // intento previo a un modelo que ya no existe (evita una llamada 404
+  // innecesaria en cada análisis).
+  const result = await callGroq(messages, "qwen/qwen3.8-27b", { maxTokens: 400, jsonMode: false });
+  return result.trim();
 }
 
 // Groq (a diferencia de Gemini) no fuerza un schema estricto, solo JSON válido.
@@ -1802,10 +1800,18 @@ const COSTS = {
         
         Object.entries(stateToSave).forEach(([key, value]) => {
           const storageKey = key.startsWith('is_') || key.startsWith('api_') ? key : `app_${key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)}`;
-          if (value !== null && value !== undefined) {
-            localStorage.setItem(storageKey, typeof value === 'object' ? JSON.stringify(value) : String(value));
-          } else {
-            localStorage.removeItem(storageKey);
+          // Cada clave se guarda en su propio try/catch: si una (ej. las
+          // imágenes de referencia, pesadas) excede la cuota de
+          // localStorage, NO debe impedir que se guarden las demás claves
+          // ni, sobre todo, que la historia se guarde en IndexedDB más abajo.
+          try {
+            if (value !== null && value !== undefined) {
+              localStorage.setItem(storageKey, typeof value === 'object' ? JSON.stringify(value) : String(value));
+            } else {
+              localStorage.removeItem(storageKey);
+            }
+          } catch (itemErr) {
+            console.warn(`No se pudo guardar '${storageKey}' en este navegador (posiblemente demasiado grande):`, itemErr);
           }
         });
 
