@@ -1228,26 +1228,41 @@ export default function App() {
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
   const [quotaErrorMessage, setQuotaErrorMessage] = useState<string | null>(null);
   const [consistencyLevel, setConsistencyLevel] = useState<"Standard" | "Extreme">(() => (localStorage.getItem('app_consistency_level') as any) || "Standard");
-  const [savedCharacters, setSavedCharacters] = useState<{id: string, name: string, description: string, style: VisualStyle, imageUrl?: string}[]>(() => {
-    try {
-      const saved = localStorage.getItem('app_saved_characters');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      console.error("Error parsing saved characters:", e);
-      return [];
-    }
-  });
+  const [savedCharacters, setSavedCharacters] = useState<{id: string, name: string, description: string, style: VisualStyle, imageUrl?: string}[]>([]);
+  const savedCharactersLoadedRef = React.useRef(false);
 
   // Los personajes guardados incluyen imageUrl en base64 (igual que las
   // imágenes de referencia) — nunca a Firestore (rompe el límite de tamaño
-  // del documento), solo a este navegador. Antes se leía de localStorage
-  // pero nunca se escribía de vuelta ahí.
+  // del documento), solo a este navegador. Se guardan en IndexedDB (no
+  // localStorage) porque las imágenes en base64 pueden superar fácilmente
+  // el límite de ~5-10MB de localStorage y disparar QuotaExceededError.
   useEffect(() => {
-    try {
-      localStorage.setItem('app_saved_characters', JSON.stringify(savedCharacters));
-    } catch (e) {
-      console.warn('No se pudieron guardar los personajes en localStorage (puede que las imágenes sean muy pesadas).', e);
-    }
+    (async () => {
+      try {
+        // Migración de datos viejos en localStorage, si existieran.
+        const legacy = localStorage.getItem('app_saved_characters');
+        const fromDb = await loadValueFromDB<typeof savedCharacters>(SAVED_CHARACTERS_KEY);
+        if (fromDb && fromDb.length > 0) {
+          setSavedCharacters(fromDb);
+        } else if (legacy) {
+          const parsed = JSON.parse(legacy);
+          setSavedCharacters(parsed);
+          await saveValueToDB(SAVED_CHARACTERS_KEY, parsed);
+        }
+        if (legacy) localStorage.removeItem('app_saved_characters');
+      } catch (e) {
+        console.error("Error cargando personajes guardados:", e);
+      } finally {
+        savedCharactersLoadedRef.current = true;
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!savedCharactersLoadedRef.current) return; // evita sobreescribir con [] antes de cargar
+    saveValueToDB(SAVED_CHARACTERS_KEY, savedCharacters).catch((e) => {
+      console.warn('No se pudieron guardar los personajes en IndexedDB.', e);
+    });
   }, [savedCharacters]);
   const [story, setStoryState] = useState<Story | null>(null);
   const storyRef = React.useRef<Story | null>(null);
@@ -1397,27 +1412,40 @@ export default function App() {
   }, []);
   
   const [visualAnchor, setVisualAnchor] = useState<string | null>(() => localStorage.getItem('app_visual_anchor'));
-  const [visualAnchorImages, setVisualAnchorImages] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('app_visual_anchor_images');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
+  const [visualAnchorImages, setVisualAnchorImages] = useState<string[]>([]);
+  const visualAnchorImagesLoadedRef = React.useRef(false);
 
   // Las imágenes de referencia ya no se sincronizan con Firestore (ver nota
-  // más abajo, en el guardado de ajustes) — se guardan solo en este navegador.
+  // más abajo, en el guardado de ajustes) ni con localStorage (varias
+  // imágenes en base64 de alta resolución superan fácilmente su límite de
+  // ~5-10MB y disparaban QuotaExceededError) — se guardan en IndexedDB,
+  // que no tiene ese límite práctico, solo en este navegador.
   useEffect(() => {
-    try {
-      if (visualAnchorImages.length > 0) {
-        localStorage.setItem('app_visual_anchor_images', JSON.stringify(visualAnchorImages));
-      } else {
-        localStorage.removeItem('app_visual_anchor_images');
+    (async () => {
+      try {
+        const legacy = localStorage.getItem('app_visual_anchor_images');
+        const fromDb = await loadValueFromDB<string[]>(VISUAL_ANCHOR_IMAGES_KEY);
+        if (fromDb && fromDb.length > 0) {
+          setVisualAnchorImages(fromDb);
+        } else if (legacy) {
+          const parsed = JSON.parse(legacy);
+          setVisualAnchorImages(parsed);
+          await saveValueToDB(VISUAL_ANCHOR_IMAGES_KEY, parsed);
+        }
+        if (legacy) localStorage.removeItem('app_visual_anchor_images');
+      } catch (e) {
+        console.error("Error cargando imágenes de referencia:", e);
+      } finally {
+        visualAnchorImagesLoadedRef.current = true;
       }
-    } catch (e) {
-      console.warn('No se pudieron guardar las imágenes de referencia en localStorage (puede que sean muy pesadas para el almacenamiento local del navegador).', e);
-    }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!visualAnchorImagesLoadedRef.current) return; // evita sobreescribir con [] antes de cargar
+    saveValueToDB(VISUAL_ANCHOR_IMAGES_KEY, visualAnchorImages).catch((e) => {
+      console.warn('No se pudieron guardar las imágenes de referencia en IndexedDB.', e);
+    });
   }, [visualAnchorImages]);
 
   // --- Settings Sync with Firestore ---
@@ -1687,6 +1715,40 @@ async function loadStoryFromDB(): Promise<Story | null> {
     });
   } catch (err) {
     console.error("Failed to load story from IndexedDB:", err);
+    return null;
+  }
+}
+
+const VISUAL_ANCHOR_IMAGES_KEY = "visual_anchor_images";
+const SAVED_CHARACTERS_KEY = "saved_characters";
+
+async function saveValueToDB(key: string, value: any) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    store.put(value, key);
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.error(`Failed to save '${key}' to IndexedDB:`, err);
+  }
+}
+
+async function loadValueFromDB<T = any>(key: string): Promise<T | null> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.get(key);
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve((request.result as T) ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (err) {
+    console.error(`Failed to load '${key}' from IndexedDB:`, err);
     return null;
   }
 }
@@ -2325,7 +2387,31 @@ const COSTS = {
                 : `NOTA: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia de personaje, pero no se pudieron analizar en este intento. Inventa una descripción física ÚNICA, DETALLADA y CONSISTENTE del personaje (color de pelo, rasgos, estilo) y mantenla IDÉNTICA en todos los segmentos.`))
         : "";
 
-      const generateWithModel = async (modelName: string) => {
+      // Suaviza el lenguaje del prompt (mayúsculas/órdenes tajantes) para
+      // el reintento tras un rechazo de Groq. Los modelos gpt-oss tienen un
+      // filtro de seguridad que a veces interpreta instrucciones muy
+      // tajantes en mayúsculas ("TOTALMENTE PROHIBIDO", "OBLIGATORIO",
+      // "ESTADO CRÍTICO", "BAJO NINGUNA CIRCUNSTANCIA") como una posible
+      // manipulación/jailbreak y devuelve {"error": "conflicting and
+      // disallowed instructions..."} en vez de las escenas. Esto NO cambia
+      // ninguna regla de ninguna categoría — solo el TONO en que se la
+      // pedimos al modelo, el contenido/estilo pedido es idéntico.
+      const softenPromptLanguage = (text: string): string => text
+        .replace(/TOTALMENTE PROHIBIDO/gi, "evita")
+        .replace(/ESTRICTAMENTE PROHIBIDO/gi, "evita")
+        .replace(/TERMINANTEMENTE PROHIBIDO/gi, "evita")
+        .replace(/ESTÁ PROHIBIDO/gi, "evita")
+        .replace(/PROHIBICIÓN ESTRICTA DE PALABRAS: BAJO NINGUNA CIRCUNSTANCIA/gi, "Evita")
+        .replace(/BAJO NINGUNA CIRCUNSTANCIA/gi, "por favor evita")
+        .replace(/PROHIBIDO \(CRÍTICO\)/gi, "Evita")
+        .replace(/¡ESTADO CRÍTICO!/gi, "Importante:")
+        .replace(/OBLIGATORIO Y PRIORITARIO SOBRE CUALQUIER OTRA INSTRUCCIÓN DE APARIENCIA/gi, "importante para este estilo")
+        .replace(/\(OBLIGATORIO(?:, APLICA A TODAS LAS CATEGORÍAS)?\)/gi, "")
+        .replace(/OBLIGATORIO/gi, "importante")
+        .replace(/\bES VITAL\b/gi, "Es importante")
+        .replace(/\*\*ESTÁ TOTALMENTE PROHIBIDO[^*]*\*\*/gi, "Por favor respeta el texto exacto sin alterar palabras.");
+
+      const generateWithModel = async (modelName: string, soften: boolean = false) => {
         const directScriptInstruction = (!exactTextSegments && (activePrompt.includes("NARRACIÓN") || activePrompt.includes("HOOK")))
           ? `¡ESTADO CRÍTICO! El usuario ha proporcionado un GUIÓN TEXTUAL COMPLETO. TU ÚNICA TAREA ES EXTRAER ESE TEXTO Y DIVIDIRLO EN SEGMENTOS. **ESTÁ TOTALMENTE PROHIBIDO ALTERAR, CAMBIAR, AÑADIR O QUITAR PALABRAS Y DESENLACES A LA HISTORIA.** Respeta el texto EXACTO. Asigna una voz diferente si un segmento es diálogo de otro personaje.` : ``;
 
@@ -2395,61 +2481,84 @@ const COSTS = {
         // imágenes ya no viajan en esta llamada (ver analyzeReferenceImages
         // más arriba en generateStory, que ya extrajo una descripción de
         // texto de las imágenes antes de llegar aquí).
+        const finalPrompt = soften ? softenPromptLanguage(textPrompt) : textPrompt;
         const groqResponse = await withRetry(() => callGroq([
           { role: "system", content: "Eres un guionista y director de arte experto en contenido viral para redes sociales. SIEMPRE respondes con JSON válido y nada más, sin explicaciones ni markdown." },
-          { role: "user", content: textPrompt }
+          { role: "user", content: finalPrompt }
         ], modelName));
 
         return groqResponse;
       };
 
-      let rawText: string;
+      // Extrae el array de segmentos de la respuesta de Groq, sea cual sea
+      // la forma en la que vino anidado. Devuelve null si no hay segmentos
+      // válidos (incluye el caso de un rechazo de contenido: {"error": "..."}).
+      const extractSegments = (data: any): any[] | null => {
+        let segs: any = data?.segments;
+        if (!Array.isArray(segs)) {
+          if (Array.isArray(data)) {
+            segs = data;
+          } else if (Array.isArray(data?.story?.segments)) {
+            segs = data.story.segments;
+          } else if (Array.isArray(data?.data?.segments)) {
+            segs = data.data.segments;
+          } else {
+            const firstArrayValue = data && typeof data === 'object'
+              ? Object.values(data).find((v: any) => Array.isArray(v) && v.length > 0 && typeof v[0] === 'object')
+              : null;
+            segs = firstArrayValue || null;
+          }
+        }
+        return (Array.isArray(segs) && segs.length > 0) ? segs : null;
+      };
+
+      // Intenta generar y valida que la respuesta tenga 'segments' de verdad.
+      // Esto es importante porque un rechazo de contenido de Groq (los
+      // modelos gpt-oss tienen un filtro de seguridad interno) llega como un
+      // JSON 200 OK válido con {"error": "..."} en vez de un error HTTP, así
+      // que withRetry/callGroq no lo detectan solos — hay que revisarlo aquí
+      // para que la cadena de reintentos de abajo pueda reaccionar.
+      const attemptGenerate = async (modelName: string, soften: boolean): Promise<any> => {
+        const text = await generateWithModel(modelName, soften);
+        const parsed = parseGroqJson(text);
+        const segs = extractSegments(parsed);
+        if (!segs) {
+          const refusalReason = (parsed && typeof parsed === 'object' && typeof (parsed as any).error === 'string')
+            ? (parsed as any).error
+            : null;
+          throw new Error(refusalReason
+            ? `Groq rechazó la petición: ${refusalReason}`
+            : "Groq devolvió una respuesta sin 'segments' válido.");
+        }
+        return parsed;
+      };
+
+      let data: any;
       try {
-        rawText = await generateWithModel("openai/gpt-oss-120b");
+        data = await attemptGenerate("openai/gpt-oss-120b", false);
       } catch (err: any) {
         console.warn(`[Groq] Falló el modelo principal (intento 1):`, err?.message || err);
         try {
-          // "Failed to generate JSON" suele ser un tropiezo puntual del
-          // muestreo del modelo con prompts largos/complejos, no una
-          // limitación real — reintentamos con el MISMO modelo (más
-          // confiable siguiendo las instrucciones de cantidad de segmentos)
-          // antes de bajar a uno más débil.
-          rawText = await generateWithModel("openai/gpt-oss-120b");
+          // Si fue un rechazo de contenido (filtro de seguridad de gpt-oss
+          // por lenguaje muy tajante en mayúsculas), reintentamos con el
+          // MISMO modelo pero suavizando el TONO del prompt — el contenido y
+          // las reglas pedidas son exactamente las mismas, solo cambia cómo
+          // se las redactamos. Si fue otro tipo de fallo (JSON cortado,
+          // tropiezo puntual), este reintento con lenguaje más suave también
+          // ayuda y es igual de válido.
+          data = await attemptGenerate("openai/gpt-oss-120b", true);
         } catch (err2: any) {
           console.warn(`[Groq] Falló el modelo principal (intento 2), bajando a gpt-oss-20b:`, err2?.message || err2);
-          rawText = await generateWithModel("openai/gpt-oss-20b");
+          try {
+            data = await attemptGenerate("openai/gpt-oss-20b", true);
+          } catch (err3: any) {
+            console.error("Respuesta de Groq sin 'segments' válido tras 3 intentos:", err3?.message || err3);
+            throw new Error("Groq devolvió una respuesta con un formato inesperado (sin 'segments'). Intenta generar de nuevo; si persiste, prueba con una duración/número de segmentos menor.");
+          }
         }
       }
 
-      if (!rawText) {
-        throw new Error("Groq no devolvió ninguna respuesta.");
-      }
-
-      const data = parseGroqJson(rawText);
-
-      // Groq no fuerza un schema estricto como Gemini, así que a veces el
-      // array de segmentos viene anidado bajo una clave distinta o el
-      // modelo devuelve directamente un array. Intentamos varias formas
-      // razonables antes de fallar con un mensaje claro.
-      let rawSegments: any = data?.segments;
-      if (!Array.isArray(rawSegments)) {
-        if (Array.isArray(data)) {
-          rawSegments = data;
-        } else if (Array.isArray(data?.story?.segments)) {
-          rawSegments = data.story.segments;
-        } else if (Array.isArray(data?.data?.segments)) {
-          rawSegments = data.data.segments;
-        } else {
-          const firstArrayValue = data && typeof data === 'object'
-            ? Object.values(data).find((v: any) => Array.isArray(v) && v.length > 0 && typeof v[0] === 'object')
-            : null;
-          rawSegments = firstArrayValue || null;
-        }
-      }
-      if (!Array.isArray(rawSegments) || rawSegments.length === 0) {
-        console.error("Respuesta de Groq sin 'segments' válido:", data);
-        throw new Error("Groq devolvió una respuesta con un formato inesperado (sin 'segments'). Intenta generar de nuevo; si persiste, prueba con una duración/número de segmentos menor.");
-      }
+      const rawSegments = extractSegments(data)!;
 
       addCost(COSTS.STORY_GEN, 'stories');
 
