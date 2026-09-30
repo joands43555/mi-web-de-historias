@@ -1480,11 +1480,16 @@ export default function App() {
         if (data.subtitleStyle !== undefined) setSubtitleStyle(prev => prev !== data.subtitleStyle ? data.subtitleStyle : prev);
         if (data.subtitlePosition !== undefined) setSubtitlePosition(prev => prev !== data.subtitlePosition ? data.subtitlePosition : prev);
         if (data.consistencyLevel !== undefined) setConsistencyLevel(prev => prev !== data.consistencyLevel ? data.consistencyLevel : prev);
-        if (data.savedCharacters !== undefined) setSavedCharacters(prev => JSON.stringify(prev) !== JSON.stringify(data.savedCharacters) ? data.savedCharacters : prev);
+        // NOTA: savedCharacters y visualAnchorImages ya NO se leen de Firestore
+        // (nunca se escriben ahí, ver el guardado más abajo) — viven solo en
+        // IndexedDB de este navegador. Si este listener los aplicara y el
+        // documento tuviera un valor viejo/vacío de antes de ese cambio (o
+        // llegado de otro guardado), pisaría las imágenes/personajes recién
+        // subidos apenas se disparara cualquier guardado de ajustes — que es
+        // exactamente el bug de "subo una referencia y la app la quita sola".
         if (data.totalCost !== undefined) setTotalCost(prev => prev !== data.totalCost ? data.totalCost : prev);
         if (data.costBreakdown !== undefined) setCostBreakdown(prev => JSON.stringify(prev) !== JSON.stringify(data.costBreakdown) ? data.costBreakdown : prev);
         if (data.visualAnchor !== undefined) setVisualAnchor(prev => prev !== data.visualAnchor ? data.visualAnchor : prev);
-        if (data.visualAnchorImages !== undefined) setVisualAnchorImages(prev => JSON.stringify(prev) !== JSON.stringify(data.visualAnchorImages) ? data.visualAnchorImages : prev);
         if (data.manualApiKey !== undefined) setManualApiKey(prev => prev !== data.manualApiKey ? data.manualApiKey : prev);
         if (data.currentStoryId !== undefined) setCurrentStoryId(prev => prev !== data.currentStoryId ? data.currentStoryId : prev);
         if (data.isAuthorized !== undefined) setIsAuthorized(prev => prev !== data.isAuthorized ? data.isAuthorized : prev);
