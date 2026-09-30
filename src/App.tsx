@@ -2451,6 +2451,7 @@ const COSTS = {
           3. Describe el tipo de movimiento exacto o la acción de forma fluida y cinemática (caminar, gesticular, parpadear).
           4. Describe la ambientación y los movimientos de cámara (paneos, zooms, iluminación ambiental) en tiempo actual.
           5. AL FINAL DE CADA DESCRIPCIÓN DE MOVIMIENTO, añade SIEMPRE EXACTAMENTE esta frase: "No poner música ni audio de voz."
+          6. CONSISTENCIA OBLIGATORIA ENTRE 'imagePrompt' Y 'videoDescription' (APLICA A TODAS LAS CATEGORÍAS): Ambos campos, dentro de un mismo segmento, deben describir LA MISMA pose/acción/gesto del personaje en ese instante — 'imagePrompt' es esa pose congelada en una imagen, y 'videoDescription' es esa MISMA pose vista en movimiento (de dónde viene y hacia dónde va ese gesto), NUNCA una acción distinta o inventada aparte. Por ejemplo, si 'imagePrompt' describe al personaje con el brazo alzado alcanzando algo intangible, 'videoDescription' debe describir el movimiento de ESE mismo gesto (el brazo elevándose hacia ese punto), no una acción no relacionada como caminar hacia una mesa.
           
           ${activeStyle === "Dios" ? `
           ESTRUCTURA PARA ESTILO DIOS:
