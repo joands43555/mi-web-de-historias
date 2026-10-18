@@ -542,6 +542,19 @@ function splitExactTextIntoSegments(text: string, minWords = 10, maxWords = 20, 
   const sentences = byLines
     ? text.split(/\n+/).map(l => l.trim()).filter(Boolean).flatMap(l => splitExactTextIntoSentences(l))
     : splitExactTextIntoSentences(text);
+  if (byLines) {
+    // Texto sin saltos de línea ni puntuación: se corta por cantidad de palabras
+    // para no terminar con un único segmento gigante.
+    const chunked: string[] = [];
+    for (const unit of sentences) {
+      const words = unit.split(/\s+/).filter(Boolean);
+      if (words.length <= maxWords * 2) { chunked.push(unit); continue; }
+      const parts = Math.ceil(words.length / ((minWords + maxWords) / 2));
+      const size = Math.ceil(words.length / parts);
+      for (let i = 0; i < words.length; i += size) chunked.push(words.slice(i, i + size).join(' '));
+    }
+    sentences.splice(0, sentences.length, ...chunked);
+  }
   const segments: string[] = [];
   let current = '';
   let currentWordCount = 0;
