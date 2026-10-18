@@ -352,24 +352,133 @@ async function callGroq(
 // les pedimos solo una descripción corta en texto plano del personaje. Esa
 // descripción luego se le pasa al modelo de TEXTO (mucho más generoso en su
 // cuota gratuita) para que escriba la historia completa.
-async function analyzeReferenceImages(images: string[]): Promise<string> {
-  const content: GroqContentPart[] = [
-    {
-      type: "text",
-      text: `Analiza el/los personaje(s) en la(s) imagen(es) de referencia adjunta(s) y escribe una descripción visual CONCISA en texto plano (máximo 100 palabras). Para CADA imagen/personaje, indica PRIMERO y de forma muy explícita: (1) su género (hombre/mujer) y (2) el COLOR EXACTO de su brillo/energía si es un estilo holográfico/neón (usa un nombre de color concreto y reconocible, ej. "magenta/rosa vibrante", "dorado/ámbar cálido", "cian eléctrico" — nunca algo vago como "colorido" o "luminoso" sin especificar el color). Luego añade: complexión física, cabello, rasgos si son visibles, ropa. Si hay varias imágenes, numera los personajes (Personaje 1, Personaje 2...) para que se puedan distinguir. Esta descripción la usará después OTRA IA que NO puede ver imágenes, para mantener a cada personaje visualmente consistente e identificable en muchas ilustraciones. NO uses JSON, NO uses markdown, solo texto plano descriptivo.`
-    },
-    ...images.slice(0, 5).map(img => ({ type: "image_url" as const, image_url: { url: img } }))
-  ];
+//
+// IMPORTANTE (límites reales de Groq para qwen/qwen3.8-27b): máximo 3 imágenes
+// por petición y cada imagen cuenta como 2048 tokens de entrada. Antes se
+// mandaban hasta 5 imágenes juntas — con 4 o 5 referencias la petición entera
+// fallaba, el análisis se descartaba en silencio y el modelo inventaba
+// personajes que ya no se parecían a tus referencias. Ahora se analiza UNA
+// imagen por llamada, el resultado se guarda en caché (por imagen) para no
+// gastar cuota en cada historia, y si algo falla se le avisa al usuario.
+const REF_ANALYSIS_CACHE_KEY = 'app_ref_analysis_v1';
+const REF_ANALYSIS_CACHE_MAX = 30;
+
+function hashImageDataUrl(img: string): string {
+  // FNV-1a sobre ~200 muestras repartidas + longitud: barato y suficiente
+  // para distinguir imágenes distintas entre sí.
+  let h = 2166136261;
+  const step = Math.max(1, Math.floor(img.length / 200));
+  for (let i = 0; i < img.length; i += step) {
+    h ^= img.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `${img.length}_${(h >>> 0).toString(16)}`;
+}
+
+function readRefAnalysisCache(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(REF_ANALYSIS_CACHE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeRefAnalysisCache(cache: Record<string, string>) {
+  try {
+    const keys = Object.keys(cache);
+    const trimmed: Record<string, string> = {};
+    keys.slice(-REF_ANALYSIS_CACHE_MAX).forEach(k => { trimmed[k] = cache[k]; });
+    localStorage.setItem(REF_ANALYSIS_CACHE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // sin caché no pasa nada: solo se volverá a analizar la próxima vez
+  }
+}
+
+// Reduce la imagen antes de mandarla (los tokens por imagen son fijos, pero
+// una foto de varios MB puede ser rechazada por tamaño de petición).
+async function downscaleImageForVision(dataUrl: string, maxSide = 768): Promise<string> {
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('no se pudo leer la imagen'));
+      el.src = dataUrl;
+    });
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return dataUrl;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } catch {
+    return dataUrl;
+  }
+}
+
+async function describeOneReferenceImage(image: string): Promise<string> {
+  const small = await downscaleImageForVision(image);
   const messages: GroqChatMessage[] = [
     { role: "system", content: "Eres un analista visual. Describes personajes en imágenes de forma concisa y precisa, en texto plano, nunca en JSON." },
-    { role: "user", content }
+    {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: `Describe al personaje de esta imagen de referencia en texto plano (máximo 70 palabras). Indica PRIMERO y de forma muy explícita: (1) su género (hombre/mujer) y (2) el COLOR EXACTO de su brillo/energía si es un estilo holográfico/neón (usa un nombre de color concreto y reconocible, ej. "magenta/rosa vibrante", "dorado/ámbar cálido", "cian eléctrico" — nunca algo vago como "colorido" o "luminoso" sin especificar el color). Luego añade: complexión física, cabello, rasgos si son visibles, ropa. Esta descripción la usará después OTRA IA que NO puede ver imágenes, para mantener al personaje visualmente consistente e identificable en muchas ilustraciones. NO uses JSON, NO uses markdown, solo texto plano descriptivo.`
+        },
+        { type: "image_url", image_url: { url: small } }
+      ]
+    }
   ];
-  // qwen/qwen3.6-27b fue retirado por Groq (14 sept 2026). qwen3.8-27b es
-  // ahora el ÚNICO modelo de visión disponible — se llama directo, sin
-  // intento previo a un modelo que ya no existe (evita una llamada 404
-  // innecesaria en cada análisis).
-  const result = await callGroq(messages, "qwen/qwen3.8-27b", { maxTokens: 400, jsonMode: false });
-  return result.trim();
+  // qwen/qwen3.8-27b es hoy el ÚNICO modelo de visión de Groq disponible
+  // (en "preview": Groq puede retirarlo sin aviso, como pasó con qwen3.6).
+  let lastErr: any;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const result = await callGroq(messages, "qwen/qwen3.8-27b", { maxTokens: 300, jsonMode: false });
+      return result.trim();
+    } catch (err: any) {
+      lastErr = err;
+      const isRateLimit = /429|rate limit|rate_limit|too many/i.test(String(err?.message || ''));
+      if (!isRateLimit || attempt === 2) throw err;
+      // El análisis de visión tiene una cuota de entrada por minuto muy baja:
+      // esperamos a que se libere antes de reintentar.
+      await new Promise(r => setTimeout(r, 20000));
+    }
+  }
+  throw lastErr;
+}
+
+async function analyzeReferenceImages(images: string[]): Promise<{ text: string; failed: number; total: number }> {
+  const targets = images.slice(0, 5);
+  const cache = readRefAnalysisCache();
+  const lines: string[] = [];
+  let failed = 0;
+
+  for (let i = 0; i < targets.length; i++) {
+    const key = hashImageDataUrl(targets[i]);
+    let desc = cache[key];
+    if (!desc) {
+      try {
+        desc = await describeOneReferenceImage(targets[i]);
+        if (desc) {
+          cache[key] = desc;
+          writeRefAnalysisCache(cache);
+        }
+      } catch (err) {
+        console.warn(`[Groq] No se pudo analizar la imagen de referencia ${i + 1}:`, err);
+        failed++;
+        continue;
+      }
+    }
+    if (desc) lines.push(targets.length > 1 ? `Personaje ${i + 1}: ${desc}` : desc);
+  }
+  return { text: lines.join('\n'), failed, total: targets.length };
 }
 
 // Groq (a diferencia de Gemini) no fuerza un schema estricto, solo JSON válido.
@@ -1392,6 +1501,8 @@ export default function App() {
   const [isStoryLoaded, setIsStoryLoaded] = useState(false);
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Aviso no bloqueante (ámbar): p. ej. cuando no se pudieron analizar las imágenes de referencia.
+  const [referenceWarning, setReferenceWarning] = useState<string | null>(null);
   const [totalCost, setTotalCost] = useState(0);
   const [costBreakdown, setCostBreakdown] = useState({
     stories: 0,
@@ -2244,7 +2355,7 @@ const COSTS = {
       else if (activeStyle === "Manhwa Premium") styleDetail = "Masterpiece, Supreme Quality, Ultra detailed premium mature manhwa style, semi-realistic digital illustration, perfect airbrushed glowing skin, symmetrical hyper-idealized features, cinematic rim lighting, vibrant saturated colors. FEMALE CHARACTER: supreme beauty, extremely attractive, hyper-idealized exaggerated hourglass figure, large lifted bust, narrow waist, wide hips, thick thighs, sculpted athletic body, long flowing silky hair, alluring and seductive expression. MALE CHARACTER: supreme handsomeness, massive build, wide shoulders, broad chest, large pectorals, alpha male physique, sharp jawline, intense gaze, rugged handsomeness.";
       else if (activeStyle === "Neon Blueprint") styleDetail = "Masterpiece, hyper-detailed scene where the ENTIRE WORLD is built from a SINGLE UNIFIED dense glowing wireframe mesh. Humanoid figures, buildings, streets, furniture, and trees must all be part of the same glowing wireframe structure. NO HUMAN SKIN, NO SOLID FABRICS, only glowing neon wireframe. Characters' bodies, hair, and ALL THEIR CLOTHING MUST BE RENDERED IN THEIR EXACT REFERENCE COLOR. No white clothing, no black clothing, only clothing made of glowing wireframe matching their skin color. The characters wear Casual Streetwear (jackets, jeans, sneakers) that is fully integrated into the glowing wireframe mesh, rendered in their exact color. Environment: A 3D technical blueprint of a real-world everyday urban setting (street, cafe, park) where every object is rendered as a detailed dark glowing wireframe (e.g., dark blue) to contrast with the characters. STRICTLY PROHIBITED: NO NUMBERS, NO TEXT, NO LETTERS, NO SIGNS, NO CARS, NO SOLID CLOTHING. Monochromatic character lighting, uniform clean 3D viewport grid topology, high contrast, 8k.";
       else if (activeStyle === "Neon Pro") styleDetail = "Masterpiece, hyper-detailed scene. Characters are made entirely of a highly detailed, glowing neon polygonal wireframe mesh. Very realistic human anatomy and proportions despite being made of glowing wireframe. ALL CLOTHING MUST MATCH THE CHARACTER'S EXACT AVATAR COLOR (e.g., if the character is pink wireframe, their jacket and pants MUST also be pink wireframe). Dark solid background to emphasize the glowing wireframe characters without the background being wireframe. STRICTLY PROHIBITED: NO NUMBERS, NO TEXT, NO SIGNS, NO CARS, NO VEHICLES. Monochromatic character lighting, uniform clean 3D viewport grid topology, volumetric glow, high contrast, 8k.";
-      else if (activeStyle === "HOLOGRAPHIC SOUL") styleDetail = "Masterpiece, hyper-detailed scene. The character is a solid, glowing, translucent volumetric light silhouette, like a being made of soft ethereal energy. Smooth diffuse glow, no wireframe grid lines, no visible skin or fabric texture. Dark, minimalist, almost black background to make the glowing figure stand out. Subtle chromatic soft-focus edges, gentle particle glow, 8k, ethereal and contemplative atmosphere.";
+      else if (activeStyle === "HOLOGRAPHIC SOUL") styleDetail = "Masterpiece, hyper-detailed cinematic scene. The character is a solid, glowing, translucent volumetric light silhouette made of soft diffuse energy, standing or moving naturally on the ground like a real person (never floating), inside a REAL, believable everyday environment with dramatic contrast between the character's internal light and the deep shadows of the room. Smooth diffuse glow, no wireframe grid lines, no visible skin or fabric texture. Subtle chromatic soft-focus edges, gentle particle glow, 8k, natural human-scale composition.";
       else if (activeStyle === "Power Couple") styleDetail = "Masterpiece, Supreme Quality, High-end digital illustration, luxury mature comic style, premium graphic novel aesthetic. Elegant strokes, dramatic volumetric shading, high-contrast lighting. CHARACTERS: Stunningly beautiful, supreme attractiveness, hyper-idealized exaggerated hourglass physiques, seductive poses, vibrant colors, sophisticated atmosphere.";
       else if (activeStyle === "Comic Realista Moderno") styleDetail = "Masterpiece, Supreme Quality, High-end Realistic Graphic Novel style, clean sharp black outlines, dramatic chiaroscuro lighting, high-contrast. CHARACTERS: Hyper-idealized and sculptural anatomy, extremely attractive and seductive. FEMALE: Hyper-idealized exaggerated hourglass figure, large lifted bust, narrow waist, wide hips, thick thighs, sculpted athletic body, long flowing silky hair, alluring and seductive expression. MALE: Massive build, wide shoulders, broad chest, large pectorals, alpha male physique, sharp jawline, intense gaze. SCENES: Cinematic composition, deep shadows, sophisticated color palette, high-definition textures, 8k, octane render style.";
       else if (activeStyle === "Dios") styleDetail = "Masterpiece, High-end Divine and Majestic style. Cinematic lighting with volumetric light rays (god rays) piercing through clouds or windows. Celestial and biblical figures with subtle but powerful auras. Dramatic contrast between sacred lights and deep shadows. Hyper-realistic textures on fabrics and skin. Monumental settings: infinite skies, ancient temples, or modern environments with a supernatural atmosphere. 8k quality, epic and emotional. Characters must have an imposing and serene presence. IF THE CHARACTER IS JESUS OR CHRIST, he must have his traditional iconic appearance: long brown hair, well-groomed beard, humble but majestic linen robes, and a look of compassion and deep wisdom.";
@@ -2260,6 +2371,11 @@ const COSTS = {
         ? `Esta es una serie de imágenes de reflexión independientes. Cada segmento debe ser una escena ÚNICA y COMPLETAMENTE DISTINTA de las demás. 
            IMPORTANTE: Varía los personajes (diferentes etnias, edades, géneros si es apropiado), los entornos (interior, exterior, naturaleza, ciudad) y las composiciones (plano detalle, plano general, contrapicado).
            The visual style must be: ${styleDetail}. Describe the background with EXTREME DETAIL (weather, lighting, objects, atmosphere). DO NOT include text inside the image. STRICTLY PROHIBITED: Do not include character names or any text written in the scene.`
+        : activeStyle === "HOLOGRAPHIC SOUL"
+        // HOLOGRAPHIC SOUL: sin diseño de personaje inventado (pelo/ropa/belleza) — esa
+        // parte contradecía la "regla de oro" del avatar de referencia más abajo.
+        ? `The visual description ('imagePrompt') must be EXTREMELY DETAILED (minimum 150 words per segment) and written in ENGLISH. The visual style MUST be: ${styleDetail}. It must focus on the action, environment, lighting, and ALWAYS reference the main character (by gender and fixed glow color, as defined in the HOLOGRAPHIC SOUL rules) to maintain narrative consistency. Do not invent a character design (no ethnicity, hair, clothing or build): the figure is a luminous silhouette.
+           IMPORTANT: Vary the environment, props and composition in each segment so the story progresses visually. Describe the background, depth of field, and atmosphere of the scene. Do not include character names or any text written in the scene.`
         : `The visual description ('imagePrompt') must be EXTREMELY DETAILED (minimum 150 words per segment) and written in ENGLISH. The visual style MUST be: ${styleDetail}. It must focus on the action, environment, lighting, and ALWAYS reference the main character to maintain narrative consistency. Define a UNIQUE, DETAILED, and SUPREME BEAUTY character design for this story (ethnicity, perfect features, athletic build, luxurious style) to avoid generic or repetitive characters. 
            IMPORTANT: Vary the clothing and environment in each segment so the story progresses visually. Describe the character's clothing and their exact HAIR COLOR AND STYLE in each segment to maintain absolute consistency. Describe the background, depth of field, and atmosphere of the scene. STRICTLY PROHIBITED: Do not include character names or any text written in the scene.`;
 
@@ -2364,7 +2480,11 @@ const COSTS = {
              : `3. REGLA DE ORO (SIN AVATAR DE REFERENCIA CARGADO): Como no hay imagen de referencia en este caso, describe a "an ethereal holographic figure" de forma DELIBERADAMENTE ABSTRACTA: evita fijar longitud/color de cabello, prendas específicas o tono de piel exacto. Mantén solo una silueta humanoide general y coherente entre segmentos (proporciones, altura relativa), sin detalles físicos cerrados que después puedan contradecir un avatar que el usuario cargue más adelante. Si la historia deja claro el género del personaje (ej. "él"/"ella" en el concepto), sí puedes reflejarlo ("the male/female ethereal holographic figure"). Elige un color de brillo fijo por personaje (ej. cian, magenta, ámbar) y mantenlo idéntico en todos los segmentos donde aparezca.`}
            4. CALIDAD Y TEXTURAS: Renderizado fotorrealista de alta gama (estilo 8k, fotografía arquitectónica o cinematográfica) para el ENTORNO, combinado con la figura holográfica translúcida. Luz volumétrica suave, partículas de luz flotantes, acabados limpios, libres de líneas de malla o cuadrículas.
            5. PROHIBIDO (CRÍTICO): NO incluyas números, letras, letreros ni texto de ningún tipo en la imagen. NO incluyas coches ni vehículos. NO uses las palabras "futurista", "futuristic", "sci-fi", "cyberpunk".
-           Terminología recomendada (son solo palabras/frases de VOCABULARIO para describir el brillo y la textura holográfica — úsalas cuando apliquen, pero NO son una escena ni un entorno a copiar; el lugar, los objetos y la composición de cada escena deben variar según el tema de la historia): "the ethereal holographic figure from the reference image", "smooth, glowing volumetric light", "translucent body with internal luminous details", "floating light particles", "volumetric light reflections on the environment", "8k", "deep atmosphere".`
+           6. FIGURA ANCLADA AL SUELO: la figura se para, camina, se sienta o se apoya como una persona real, con los pies o el cuerpo en contacto con el suelo o un mueble. Nunca flota, levita ni queda suspendida (en 'imagePrompt' no uses "hovers", "floats" ni "levitates" para la figura; solo las partículas de luz flotan), salvo que la narración lo diga literalmente.
+           7. APERTURA Y VARIEDAD: el segmento 1 (APERTURA) muestra el primer momento concreto del texto con el personaje de quien habla o a quien se dirige, no un retrato introspectivo genérico. Quién aparece y cuántas veces lo decide SOLO la historia: el orden de las imágenes de referencia ("Personaje 1", "Personaje 2") sirve únicamente para distinguirlos. No repitas la misma pose (manos al pecho, brazos alzados o extendidos soltando partículas, mirada al suelo) en más de 2 segmentos; alterna actividad corporal (caminar, sentarse, cocinar, escribir, conversar, mirar por una ventana), distancia de cámara y entorno.
+           8. NO LITERALICES LAS METÁFORAS: convierte cada idea abstracta en un momento cotidiano creíble (conversar, orar, cocinar, trabajar, ordenar la casa) y expresa la emoción con luz, atmósfera y lenguaje corporal; evita gestos mágicos tomados al pie de la letra (remover una olla invisible, plantar palabras en un espejo, levantar una casa con las manos, flotar sobre el techo).
+           9. 'imagePrompt' describe solo lo que se VE en un único cuadro fijo: sin sonidos ni música ("pulsando al ritmo de..."), sin secuencias ("luego"), sin texto. El movimiento va solo en 'videoDescription'.
+           Terminología recomendada (solo vocabulario de brillo y textura holográfica, NO una escena a copiar: el lugar, los objetos y la composición varían según el tema): "the ethereal holographic figure from the reference image", "smooth, glowing volumetric light", "translucent body with internal luminous details", "floating light particles", "volumetric light reflections on the environment", "8k", "deep atmosphere".`
         : "";
 
       // Groq - motor de texto/visión para historias y prompts
@@ -2374,11 +2494,21 @@ const COSTS = {
       // capa gratuita. Si el análisis falla por completo, seguimos igual,
       // solo que sin esa descripción real (el modelo tendrá que inventar).
       let characterDescriptionFromImages: string | null = null;
+      setReferenceWarning(null);
       if (visualAnchorImages.length > 0) {
         try {
-          characterDescriptionFromImages = await analyzeReferenceImages(visualAnchorImages);
+          const analysis = await analyzeReferenceImages(visualAnchorImages);
+          characterDescriptionFromImages = analysis.text || null;
+          if (analysis.failed > 0) {
+            setReferenceWarning(
+              analysis.failed === analysis.total
+                ? "No se pudieron analizar tus imágenes de referencia (límite de Groq o modelo de visión no disponible). Esta historia se generó SIN conocer a tus personajes: el género o el color del brillo pueden no coincidir. Espera 1 minuto y vuelve a generar."
+                : `Solo se pudieron analizar ${analysis.total - analysis.failed} de ${analysis.total} imágenes de referencia (límite de Groq). Los personajes que faltan pueden no coincidir. Espera 1 minuto y vuelve a generar para completarlos.`
+            );
+          }
         } catch (err) {
-          console.warn("[Groq] No se pudo analizar las imágenes de referencia (ambos modelos de visión fallaron):", err);
+          console.warn("[Groq] No se pudo analizar las imágenes de referencia:", err);
+          setReferenceWarning("No se pudieron analizar tus imágenes de referencia. Esta historia se generó SIN conocer a tus personajes: el género o el color del brillo pueden no coincidir. Espera 1 minuto y vuelve a generar.");
         }
       }
 
@@ -2388,7 +2518,7 @@ const COSTS = {
                 ? `REFERENCIA DE PERSONAJE (obtenida analizando la(s) imagen(es) que subió el usuario): ${characterDescriptionFromImages}\n\nA pesar de tener esta referencia, recuerda la regla de oro de Holographic Soul: en el 'imagePrompt' NO describas rasgos físicos fijos como pelo/ropa/piel exacta — pero SÍ usa, para cada personaje (identificados en la descripción de arriba): (1) el género explícitamente, ej. "the male ethereal holographic figure" / "the female ethereal holographic figure", y (2) el COLOR de brillo/energía detectado en la referencia (ej. magenta/rosa, dorado/ámbar, cian), mencionado explícitamente y de forma IDÉNTICA en cada escena donde aparezca ese personaje. Deja claro cuál de los personajes aparece en cada escena si hay más de uno.`
                 : `REFERENCIA DE PERSONAJE (obtenida analizando la(s) imagen(es) que subió el usuario): ${characterDescriptionFromImages}\n\nUsa ESTA descripción de forma EXTREMADAMENTE DETALLADA y CONSISTENTE en el campo 'imagePrompt' de TODOS los segmentos. NO inventes un personaje distinto a esta descripción. NO la contradigas.`)
             : (activeStyle === "HOLOGRAPHIC SOUL"
-                ? `NOTA: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia, pero no se pudieron analizar en este intento. Sigue igualmente la regla de oro de Holographic Soul: NO describas rasgos físicos fijos, pero sí indica el género si el concepto de la historia lo deja claro (ej. "the male/female ethereal holographic figure").`
+                ? `NOTA: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia, pero no se pudieron analizar en este intento. Sigue igualmente la regla de oro de Holographic Soul: NO describas rasgos físicos fijos, pero sí indica el género si el concepto de la historia lo deja claro (ej. "the male/female ethereal holographic figure"). NO inventes el color del brillo: como no conoces el color real de la referencia, escribe "glowing in the same light color as in the reference image" en cada escena donde aparezca ese personaje, para que la imagen de referencia adjunta decida el color.`
                 : `NOTA: El usuario adjuntó ${visualAnchorImages.length} imagen(es) de referencia de personaje, pero no se pudieron analizar en este intento. Inventa una descripción física ÚNICA, DETALLADA y CONSISTENTE del personaje (color de pelo, rasgos, estilo) y mantenla IDÉNTICA en todos los segmentos.`))
         : "";
 
@@ -2443,10 +2573,16 @@ const COSTS = {
             : exactTextSegments
               ? `Genera EXACTAMENTE ${exactTextSegments.length} objetos en "segments", en el mismo orden que las partes numeradas de arriba. NO incluyas el campo "text".`
               : isReflectionMode ? "Cada segmento debe ser una reflexión profunda de máximo 20 palabras." : "Crea una narrativa rica dividida en segmentos cortos de máximo 20 palabras. IMPORTANTE: Para cumplir con la duración, debes crear entre 10 y 11 segmentos por cada minuto de narración."}
-          Para cada segmento, proporciona el texto, una descripción visual detallada (EN ESPAÑOL), un ángulo de cámara y una DESCRIPCIÓN DE MOVIMIENTO Y ESCENA (EN ESPAÑOL).
+          ${activeStyle === "HOLOGRAPHIC SOUL"
+            ? "Para cada segmento, proporciona el texto, un 'imagePrompt' detallado (EN INGLÉS), un ángulo de cámara y una 'videoDescription' de MOVIMIENTO Y ESCENA (EN ESPAÑOL)."
+            : "Para cada segmento, proporciona el texto, una descripción visual detallada (EN ESPAÑOL), un ángulo de cámara y una DESCRIPCIÓN DE MOVIMIENTO Y ESCENA (EN ESPAÑOL)."}
           
-          REGLAS PARA 'imagePrompt' y 'videoDescription' (DESCRIPCIONES - EN ESPAÑOL):
-          1. REDACCIÓN ESTRICTA: La descripción DEBE describir SOLAMENTE la acción, el entorno (actual, presente, natural, rústico o doméstico) y la ropa de los personajes, SIN MENCIONAR COLOR, SIN DETALLES FÍSICOS O ANATÓMICOS, SIN FUTURISMO.
+          ${activeStyle === "HOLOGRAPHIC SOUL"
+            ? "REGLAS PARA 'imagePrompt' (EN INGLÉS) y 'videoDescription' (EN ESPAÑOL):"
+            : "REGLAS PARA 'imagePrompt' y 'videoDescription' (DESCRIPCIONES - EN ESPAÑOL):"}
+          ${activeStyle === "HOLOGRAPHIC SOUL"
+            ? "1. REDACCIÓN: describe SOLAMENTE la acción, el entorno (actual, real, cotidiano) y la composición. Al personaje lo identificas únicamente por su género y el color de su brillo (esa es la única mención de color y de rasgo permitida para él); sin detalles físicos o anatómicos, sin ropa específica, sin elementos futuristas."
+            : "1. REDACCIÓN ESTRICTA: La descripción DEBE describir SOLAMENTE la acción, el entorno (actual, presente, natural, rústico o doméstico) y la ropa de los personajes, SIN MENCIONAR COLOR, SIN DETALLES FÍSICOS O ANATÓMICOS, SIN FUTURISMO."}
           2. ¡SUPER DETALLADO! Este campo NO puede ser corto y perezoso. Debe ser una descripción profunda y rica.
           3. Describe el tipo de movimiento exacto o la acción de forma fluida y cinemática (caminar, gesticular, parpadear).
           4. Describe la ambientación y los movimientos de cámara (paneos, zooms, iluminación ambiental) en tiempo actual.
@@ -2462,8 +2598,13 @@ const COSTS = {
           ` : ""}
           ${reflectionInstruction}
           ${dynamicAnglesInstruction}
-          ${!isReflectionMode ? `
-          IMPORTANTE: Personajes de BELLEZA SUPREMA, atractivos y consistentes. Define un color de pelo y mantenlo.` : "Variedad visual total entre segmentos."}
+          ${!isReflectionMode
+            ? (activeStyle === "HOLOGRAPHIC SOUL"
+              ? `
+          IMPORTANTE: Mantén a cada personaje reconocible solo por su género y el color fijo de su brillo (ver reglas de HOLOGRAPHIC SOUL); no definas pelo, rostro ni ropa.`
+              : `
+          IMPORTANTE: Personajes de BELLEZA SUPREMA, atractivos y consistentes. Define un color de pelo y mantenlo.`)
+            : "Variedad visual total entre segmentos."}
           ${visualAnchorNote}
           Asegúrate de que cada segmento sea visualmente espectacular, artístico y de calidad suprema.
 
@@ -2848,7 +2989,7 @@ const COSTS = {
                              visualStyle === "Manhwa Premium" ? "Masterpiece, Supreme Quality, Ultra detailed premium mature manhwa style, semi-realistic digital illustration, perfect airbrushed glowing skin, symmetrical hyper-idealized features, cinematic rim lighting, vibrant saturated colors. FEMALE CHARACTER: supreme beauty, extremely attractive, hyper-idealized exaggerated hourglass figure, large lifted bust, narrow waist, wide hips, thick thighs, sculpted athletic body, long flowing silky hair, alluring and seductive expression. MALE CHARACTER: supreme handsomeness, massive build, wide shoulders, broad chest, large pectorals, alpha male physique, sharp jawline, intense gaze, rugged handsomeness." :
                               visualStyle === "Neon Blueprint" ? "Director Persona: You are the visual director of the NEON BLUEPRINT universe. Every scene is a 3D technical blueprint built from intense glowing wireframes. Clothing must be distinct per scene." :
                              visualStyle === "Neon Pro" ? "Director Persona: You are the visual director of the NEON BLUEPRINT universe. High-contrast futuristic urban environment built from glowing wireframes. Clothing MUST change per scene." :
-                             visualStyle === "HOLOGRAPHIC SOUL" ? "Director Persona: You are the visual director of the HOLOGRAPHIC SOUL universe. The subject must be a PURELY ABSTRACT, GAS-LIKE, VOLUMETRIC CLOUD OF LUMINOUS ENERGY. ABSOLUTELY NO HUMAN FEATURES: No face, no eyes, no hair, no skin, no limbs, no clothes, no solid surfaces. It is NOT a silhouette of a person, it is NOT a human shape, it is NOT a mannequin. It must be completely shapeless, like swirling nebula gas or ethereal aurora energy. Cinematic dark background with bokeh highlights. MANDATORY: NO 'human', NO 'person', NO 'face', NO 'skin', NO 'anatomy', NO 'hair', NO 'body', NO 'shape', NO 'silhouette'." :
+                             visualStyle === "HOLOGRAPHIC SOUL" ? "Cinematic hyper-detailed scene. The character is a solid, glowing, translucent volumetric light silhouette made of soft diffuse luminous energy (no face details, no skin, no clothing, no hair), with a natural human body shape and pose, standing or moving on the ground like a real person (never floating), matching the glow color of the reference image. The setting is a REAL, believable everyday environment with dramatic contrast and bokeh highlights. 8k." :
                              visualStyle === "3D Animation" ? "Masterpiece, High-end 3D Animation style, Pixar or Disney aesthetic, extremely high quality, expressive characters with large eyes and animated proportions, detailed but stylized textures, vibrant lighting, soft rendering, 8k, cinematic camera, colorful and lively atmosphere, smooth gradients." :
                              visualStyle === "Power Couple" ? "Masterpiece, Supreme Quality, High-end digital illustration, luxury mature comic style, premium graphic novel aesthetic. Elegant strokes, dramatic volumetric shading, high-contrast lighting. CHARACTERS: Stunningly beautiful, supreme attractiveness, hyper-idealized exaggerated hourglass physiques, seductive poses, vibrant colors, sophisticated atmosphere." :
                              visualStyle === "Comic Realista Moderno" ? "Masterpiece, Supreme Quality, High-end Realistic Graphic Novel style, clean sharp black outlines, dramatic chiaroscuro lighting, high-contrast. CHARACTERS: Hyper-idealized and sculptural anatomy, extremely attractive and seductive. FEMALE: Hyper-idealized exaggerated hourglass figure, large lifted bust, narrow waist, wide hips, thick thighs, sculpted athletic body, long flowing silky hair, alluring and seductive expression. MALE: Massive build, wide shoulders, broad chest, large pectorals, alpha male physique, sharp jawline, intense gaze. SCENES: Cinematic composition, deep shadows, sophisticated color palette, high-definition textures, 8k, octane render style." :
@@ -2892,9 +3033,10 @@ const COSTS = {
             `PROMPT PERSONA & RULES: You are the visual director of this cinematic universe. 
              Mandatory: Full scenes with characters AND detailed 3D/urban environments. NO empty voids.
              Lighting: Dramatic, high contrast, vibrant neon glow. 
-             Characters: Athletic/Guitar-body physiques, fully clothed per scene, NO NUDITY, NO BAREFOOT, NO BALDNESS.
+             ${visualStyle === "HOLOGRAPHIC SOUL" ? `Characters: glowing light silhouettes only (no clothing, no face details), grounded on the floor, same glow color in every scene.
+             Style: Pure Volumetric Ethereal Light Energy character in a real environment.` : `Characters: Athletic/Guitar-body physiques, fully clothed per scene, NO NUDITY, NO BAREFOOT, NO BALDNESS.
              Clothing: MUST change completely in EVERY scene. 
-             Style: ${visualStyle === "HOLOGRAPHIC SOUL" ? "Pure Volumetric Ethereal Light Energy only." : "Pure Glowing Wireframe/Holographic energy only."} NO SOLID FILLS.` : 
+             Style: Pure Glowing Wireframe/Holographic energy only. NO SOLID FILLS.`}` : 
             "CLOTHING CONSISTENCY: The characters MUST wear the EXACT same outfit as in the reference or previous segments unless a change is explicitly mentioned."}
           STRICTLY NO TEXT, NO SPEECH BUBBLES, NO DIALOGUE, NO WATERMARKS.`;
 
@@ -5844,6 +5986,18 @@ const COSTS = {
             
           
 
+          {referenceWarning && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3 text-amber-400 text-sm">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <p className="flex-1">{referenceWarning}</p>
+              <button
+                onClick={() => setReferenceWarning(null)}
+                className="text-[10px] font-bold uppercase tracking-widest text-amber-500/70 hover:text-amber-300"
+              >
+                Cerrar
+              </button>
+            </div>
+          )}
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex flex-col gap-3 text-red-400 text-sm">
               <div className="flex items-start gap-3">
