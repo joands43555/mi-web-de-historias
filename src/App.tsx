@@ -499,6 +499,33 @@ function parseGroqJson(rawText: string): any {
   }
 }
 
+// Enganche (HOLOGRAPHIC SOUL + Texto Exacto): crea 2-3 líneas cortas de apertura
+// que atrapan en los primeros segundos, a partir del texto pegado. Si falla,
+// devuelve '' y la historia sigue sin enganche (nunca bloquea la generación).
+async function generateHookForText(text: string): Promise<string> {
+  const system = "Eres guionista de videos cortos virales en español. Escribes enganches de apertura.";
+  const user = `Lee este texto y escribe SOLO el enganche de apertura para el video (2 a 4 frases muy cortas, máximo 35 palabras en total).
+Estilo: la primera frase es una pregunta o afirmación que toca una situación que el espectador reconoce y le genera curiosidad; después una frase breve que invite a seguir viendo (por ejemplo, que casi nadie explica por qué pasa, o que esto es lo que realmente ocurre). Lenguaje cotidiano, directo, sin adornos, sin emojis, sin hashtags, sin comillas. No resumas ni copies el texto, no reveles todavía la conclusión. Cada frase debe terminar con punto o signo de interrogación. Responde únicamente con el enganche.
+
+Ejemplo de estilo:
+¿Se burlan de tu mamá para hacer reír a los demás? No te rías por compromiso. Mira lo que haces en ese momento, porque casi todos fallan aquí.
+
+TEXTO:
+${text.slice(0, 2500)}`;
+  try {
+    const out = await callGroq(
+      [{ role: "system", content: system }, { role: "user", content: user }],
+      "openai/gpt-oss-20b",
+      { maxTokens: 1500, jsonMode: false }
+    );
+    const cleaned = out.replace(/["“”«»]/g, '').replace(/\s+/g, ' ').trim();
+    if (!cleaned || cleaned.startsWith('{') || cleaned.length > 400) return '';
+    return cleaned;
+  } catch {
+    return '';
+  }
+}
+
 // --- Modo "Texto Exacto": dividir el texto del usuario en segmentos SIN
 // pasar por el modelo (0% riesgo de que la IA corrompa/reescriba palabras).
 // El modelo solo se usa después para las descripciones visuales de cada
@@ -509,8 +536,12 @@ function splitExactTextIntoSentences(text: string): string[] {
   return matches.map(s => s.trim()).filter(Boolean);
 }
 
-function splitExactTextIntoSegments(text: string, minWords = 10, maxWords = 20): string[] {
-  const sentences = splitExactTextIntoSentences(text);
+function splitExactTextIntoSegments(text: string, minWords = 10, maxWords = 20, byLines = false): string[] {
+  // byLines: textos pegados con un verso/frase por línea y casi sin puntuación.
+  // Cada línea cuenta como una unidad (y si trae puntuación, también se divide por oraciones).
+  const sentences = byLines
+    ? text.split(/\n+/).map(l => l.trim()).filter(Boolean).flatMap(l => splitExactTextIntoSentences(l))
+    : splitExactTextIntoSentences(text);
   const segments: string[] = [];
   let current = '';
   let currentWordCount = 0;
@@ -2430,8 +2461,12 @@ const COSTS = {
       // pegó el usuario, sin riesgo de que la IA lo altere/corrompa al
       // "retipearlo". El modelo, más abajo, solo describe visualmente cada
       // parte ya dividida.
+      const isHoloExact = useExactText && type !== 'quote' && activeStyle === "HOLOGRAPHIC SOUL";
+      const holoHook = isHoloExact ? await generateHookForText(activePrompt) : '';
       const exactTextSegments = (useExactText && type !== 'quote')
-        ? splitExactTextIntoSegments(activePrompt)
+        ? (isHoloExact
+            ? [...(holoHook ? [holoHook] : []), ...splitExactTextIntoSegments(activePrompt, 10, 20, true)]
+            : splitExactTextIntoSegments(activePrompt))
         : null;
 
       const exactSegmentsListText = exactTextSegments
@@ -2727,7 +2762,7 @@ const COSTS = {
         id: `seg-${i}-${Date.now()}`
       }));
       
-      const fullNarration = exactTextSegments ? activePrompt.trim() : (data.narration || formattedSegments.map((s: any) => s.text).join(' '));
+      const fullNarration = exactTextSegments ? (holoHook ? `${holoHook}\n\n${activePrompt.trim()}` : activePrompt.trim()) : (data.narration || formattedSegments.map((s: any) => s.text).join(' '));
 
       const newStory: Story = { 
         id: `story-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
