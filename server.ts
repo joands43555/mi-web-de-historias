@@ -21,7 +21,7 @@ async function startServer() {
     const authHeader = req.headers['authorization'] as string;
     const apiKey = (authHeader && authHeader.startsWith('Bearer ')) 
       ? authHeader.substring(7) 
-      : (process.env.FISH_AUDIO_API_KEY || "b2d53ed246c549308d37644090cf3a2b");
+      : (process.env.FISH_AUDIO_API_KEY || "");
     
     try {
       const response = await axios.get("https://api.fish.audio/v1/me", {
@@ -41,11 +41,10 @@ async function startServer() {
     // Extract key from header
     let apiKey = (authHeader && authHeader.startsWith('Bearer ')) 
       ? authHeader.substring(7) 
-      : (process.env.FISH_AUDIO_API_KEY || "b2d53ed246c549308d37644090cf3a2b");
+      : (process.env.FISH_AUDIO_API_KEY || "");
     
-    // FORCE the good key if the client sends the known bad one or nothing
-    if (!apiKey || apiKey.startsWith("W-P-E-A")) {
-      apiKey = "b2d53ed246c549308d37644090cf3a2b";
+    if (apiKey.startsWith("W-P-E-A")) {
+      apiKey = process.env.FISH_AUDIO_API_KEY || "";
     }
 
     if (!apiKey) {
